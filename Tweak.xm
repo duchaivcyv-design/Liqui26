@@ -265,7 +265,7 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
     }
 
     CGRect screen = gOverlayWindow.bounds;
-    CGFloat duration = 0.65;
+    CGFloat duration = 0.75; // Đã tăng thêm 0.1s giúp hiệu ứng mượt mà và chậm rãi hơn
 
     CALayer *backdrop = [CALayer layer];
     backdrop.frame = screen;
@@ -388,27 +388,9 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
     %orig;
 }
 
-%end
-
-@interface SBWorkspaceApplicationSceneTransitionContext : NSObject
 @end
 
-%hook SBWorkspaceApplicationSceneTransitionContext
-
-- (void)setAnimationDisabled:(BOOL)disabled {
-    if (LMIsInAppSwitcher()) {
-        %orig(disabled);
-        return;
-    }
-
-    if (!gIsCustomTransitionActive && gLastOpenedIconFrame.size.width > 0 && gCurrentState == nil) {
-        LMPlayTransition(gLastOpenedIconFrame, nil, NO);
-    }
-    %orig(disabled);
-}
-
-%end
-
+// Chỉ xử lý đóng app thông qua nút Home hoặc thao tác về Home chuẩn, loại bỏ hoàn toàn hook đè scene context gây màn hình đen
 @interface SBIconController : NSObject
 - (void)handleHomeButtonTap;
 @end
@@ -435,5 +417,5 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
 %end
 
 %ctor {
-    LMLog(@"=== LiquidMorph v10.2 Final Clean Loaded ===");
+    LMLog(@"=== LiquidMorph v10.3 Stable Loaded ===");
 }
