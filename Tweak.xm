@@ -2,7 +2,10 @@
 #import <objc/runtime.h>
 #import <QuartzCore/QuartzCore.h>
 
-static NSString *const kLogPath = @"/var/mobile/Documents/LiquidMorph.log";
+// 1. DUONG DAN LOG AN TOAN CHO ROOTLESS & iOS 15+
+static NSString *getSafeLogPath(void) {
+    return [NSTemporaryDirectory() stringByAppendingPathComponent:@"LiquidMorph.log"];
+}
 
 static void LMLog(NSString *format, ...) {
     va_list args;
@@ -13,18 +16,20 @@ static void LMLog(NSString *format, ...) {
     formatter.dateFormat = @"yyyy-MM-dd HH:mm:ss.SSS";
     NSString *line = [NSString stringWithFormat:@"[%@] %@\n", [formatter stringFromDate:[NSDate date]], message];
     @try {
+        NSString *path = getSafeLogPath();
         NSFileManager *fm = [NSFileManager defaultManager];
-        if (![fm fileExistsAtPath:kLogPath]) [fm createFileAtPath:kLogPath contents:nil attributes:nil];
-        NSFileHandle *handle = [NSFileHandle fileHandleForWritingAtPath:kLogPath];
+        if (![fm fileExistsAtPath:path]) [fm createFileAtPath:path contents:nil attributes:nil];
+        NSFileHandle *handle = [NSFileHandle fileHandleForWritingAtPath:path];
         if (handle) {
             [handle seekToEndOfFile];
             [handle writeData:[line dataUsingEncoding:NSUTF8StringEncoding]];
             [handle closeFile];
         }
-    } @catch (NSException *e) { NSLog(@"[LiquidMorph] Log write failed: %@", e.reason); }
+    } @catch (NSException *e) { NSLog(@"[LiquidMorph] Log error: %@", e.reason); }
     NSLog(@"[LiquidMorph] %@", message);
 }
 
+// 2. CAC HAM TINH TOAN MORPHING & MATH
 static CGPathRef LMRoundedQuadPath(CGPoint tl, CGPoint tr, CGPoint br, CGPoint bl,
                                     CGFloat rTL, CGFloat rTR, CGFloat rBR, CGFloat rBL) {
     NSArray *points = @[[NSValue valueWithCGPoint:tl], [NSValue valueWithCGPoint:tr],
@@ -69,8 +74,8 @@ static CGFloat LMEdgeProgress(CGFloat t, CGFloat closeness, CGFloat maxDelay) {
 
 static CGFloat LMHumpRadius(CGFloat t) {
     CGFloat iconRadius = 13.0;
-    CGFloat peakRadius = 120.0;
-    CGFloat endRadius = 20.0;
+    CGFloat peakRadius = 100.0;
+    CGFloat endRadius = 0.0; // Phong kín góc màn hình mở app
     if (t < 0.45) {
         CGFloat local = t / 0.45;
         return iconRadius + (peakRadius - iconRadius) * local;
@@ -114,8 +119,6 @@ static UIImage *LMRenderIconImage(UIView *iconView) {
 static LMTransitionState *gCurrentState = nil;
 static UIWindow *gOverlayWindow = nil;
 
-// Giai doan dau (0..growStart): hinh GIU NGUYEN y het icon that, dung yen,
-// khong meo khong nay. Chi sau growStart moi bat dau phong to + bien dang.
 static NSArray *LMBuildKeyframePaths(CGRect iconFrame, CGRect screen, BOOL opening) {
     CGFloat iconCenterXNorm = (iconFrame.origin.x + iconFrame.size.width / 2.0) / screen.size.width;
     CGFloat iconCenterYNorm = (iconFrame.origin.y + iconFrame.size.height / 2.0) / screen.size.height;
@@ -125,15 +128,15 @@ static NSArray *LMBuildKeyframePaths(CGRect iconFrame, CGRect screen, BOOL openi
     CGFloat closeRight = iconCenterXNorm;
     CGFloat closeLeft = 1.0 - iconCenterXNorm;
 
-    NSInteger steps = 28;
+    NSInteger steps = 24;
     NSMutableArray *paths = [NSMutableArray array];
-    CGFloat maxDelay = 0.4;
-    CGFloat endRadius = 20.0;
+    CGFloat maxDelay = 0.35;
+    CGFloat endRadius = 0.0;
     CGFloat iconRadius = 13.0;
-    CGFloat growStart = 0.15;
+    CGFloat growStart = 0.08;
 
     CGFloat bounceDirection = (iconCenterYNorm > 0.5) ? -1.0 : 1.0;
-    CGFloat bounceAmount = 42.0;
+    CGFloat bounceAmount = 30.0;
 
     CGFloat iconLeft = iconFrame.origin.x;
     CGFloat iconRight = iconFrame.origin.x + iconFrame.size.width;
@@ -147,11 +150,9 @@ static NSArray *LMBuildKeyframePaths(CGRect iconFrame, CGRect screen, BOOL openi
     for (NSInteger i = 0; i <= steps; i++) {
         CGFloat tRaw = (CGFloat)i / (CGFloat)steps;
         CGFloat t = opening ? tRaw : (1.0 - tRaw);
-
         CGPathRef p;
 
         if (t < growStart) {
-            // Giai doan tinh: hinh = chinh xac icon, khong doi.
             p = LMRoundedQuadPath(
                 CGPointMake(iconLeft, iconTop), CGPointMake(iconRight, iconTop),
                 CGPointMake(iconRight, iconBottom), CGPointMake(iconLeft, iconBottom),
@@ -188,7 +189,6 @@ static NSArray *LMBuildKeyframePaths(CGRect iconFrame, CGRect screen, BOOL openi
 
             p = LMRoundedQuadPath(tl, tr, br, bl, rTL, rTR, rBR, rBL);
         }
-
         [paths addObject:(__bridge_transfer id)p];
     }
     return paths;
@@ -200,19 +200,21 @@ static void LMForceClearOverlay(void) {
         for (CALayer *l in sublayers) {
             [l removeFromSuperlayer];
         }
+        gOverlayWindow.hidden = YES;
     }
     gCurrentState = nil;
 }
 
 static void LMEnsureWindow(void) {
-    if (gOverlayWindow) return;
-    gOverlayWindow = [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
-    gOverlayWindow.windowLevel = UIWindowLevelStatusBar + 1000;
-    gOverlayWindow.userInteractionEnabled = NO;
-    gOverlayWindow.backgroundColor = [UIColor clearColor];
+    if (!gOverlayWindow) {
+        gOverlayWindow = [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
+        gOverlayWindow.windowLevel = UIWindowLevelStatusBar + 1000;
+        gOverlayWindow.userInteractionEnabled = NO;
+        gOverlayWindow.backgroundColor = [UIColor clearColor];
+    }
     if (@available(iOS 13.0, *)) {
         for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
-            if ([scene isKindOfClass:[UIWindowScene class]]) {
+            if ([scene isKindOfClass:[UIWindowScene class]] && ((UIWindowScene *)scene).activationState == UISceneActivationStateForegroundActive) {
                 gOverlayWindow.windowScene = (UIWindowScene *)scene;
                 break;
             }
@@ -226,7 +228,8 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
     LMEnsureWindow();
 
     CGRect screen = gOverlayWindow.bounds;
-    CGFloat duration = 0.45;
+    // Fast duration (0.32s) de dong bo mượt mà voi App ra giao dien full
+    CGFloat duration = 0.32; 
 
     CALayer *backdrop = [CALayer layer];
     backdrop.frame = screen;
@@ -242,19 +245,10 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
     if (iconImage) {
         iconLayer.contents = (__bridge id)iconImage.CGImage;
     } else {
-        iconLayer.backgroundColor = [UIColor colorWithWhite:0.85 alpha:1.0].CGColor;
+        iconLayer.backgroundColor = [UIColor colorWithWhite:0.95 alpha:1.0].CGColor;
     }
     iconLayer.mask = maskShape;
     [gOverlayWindow.layer addSublayer:iconLayer];
-
-    CAShapeLayer *maskShape2 = [CAShapeLayer layer];
-    maskShape2.frame = screen;
-    CALayer *colorLayer = [CALayer layer];
-    colorLayer.frame = screen;
-    colorLayer.backgroundColor = LMSystemBackgroundColor().CGColor;
-    colorLayer.opacity = 0.0;
-    colorLayer.mask = maskShape2;
-    [gOverlayWindow.layer addSublayer:colorLayer];
 
     NSArray *paths = LMBuildKeyframePaths(iconFrame, screen, opening);
 
@@ -268,43 +262,34 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
     maskShape.path = (__bridge CGPathRef)paths.lastObject;
     [maskShape addAnimation:pathAnim forKey:@"morph"];
 
-    maskShape2.path = (__bridge CGPathRef)paths.lastObject;
-    [maskShape2 addAnimation:pathAnim forKey:@"morph"];
-
-    CAKeyframeAnimation *fadeAnim = [CAKeyframeAnimation animationWithKeyPath:@"opacity"];
-    fadeAnim.values = @[@0.0, @0.0, @1.0, @1.0];
-    fadeAnim.keyTimes = @[@0.0, @0.55, @0.66, @1.0];
-    fadeAnim.duration = duration;
-    fadeAnim.fillMode = kCAFillModeForwards;
-    fadeAnim.removedOnCompletion = NO;
-
-    colorLayer.opacity = 1.0;
-    [colorLayer addAnimation:fadeAnim forKey:@"fade"];
-
     LMTransitionState *state = [LMTransitionState new];
     state.backdrop = backdrop;
     state.maskShape = maskShape;
     state.iconLayer = iconLayer;
-    state.colorLayer = colorLayer;
     state.iconFrame = iconFrame;
     state.isOpening = opening;
     gCurrentState = state;
 
-    LMLog(@"Transition %@ played | frame: %@ | iconImage: %@",
-          opening ? @"OPEN" : @"CLOSE", NSStringFromCGRect(iconFrame), iconImage ? @"yes" : @"nil");
-
-    // Don dep bang thoi gian chinh xac - KHONG dung CATransaction completion
-    // block nua (khong dang tin cay trong ngu canh hook SpringBoard nay).
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)((duration + 0.02) * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+    // Tu dong don dẹp overlay ngay khi het thoi gian
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(duration * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         if (gCurrentState == state) {
-            [backdrop removeFromSuperlayer];
-            [iconLayer removeFromSuperlayer];
-            [colorLayer removeFromSuperlayer];
-            gCurrentState = nil;
+            LMForceClearOverlay();
         }
     });
 }
 
+// 3. AN HIEU UNG GOC SPRINGBOARD (PREVENT CONFLICT & DUPLICATE ANIMATION)
+%hook SBUIAnimationController
+- (void)_willBegin {
+    %orig;
+    // An hieu ung goc mo/dong app khi LiquidMorph dang chay
+    if (gCurrentState) {
+        [self setValue:@(0.01) forKey:@"animationDuration"];
+    }
+}
+%end
+
+// 4. HOOK ICON TAP OPEN / CLOSE APP
 @interface SBIconView : UIView
 - (id)icon;
 @end
@@ -321,14 +306,12 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
                              [className.lowercaseString containsString:@"cluster"];
 
         if (isFolderLike) {
-            LMLog(@"_handleTap fired NHUNG la folder/library (class: %@) - bo qua hieu ung", className);
             %orig;
             return;
         }
 
         CGRect frameInWindow = [self.window convertRect:self.bounds fromView:self];
         UIImage *iconImage = LMRenderIconImage(self);
-        LMLog(@"_handleTap fired | class: %@ | frame: %@", className, NSStringFromCGRect(frameInWindow));
         LMPlayTransition(frameInWindow, iconImage, YES);
     } @catch (NSException *e) {
         LMLog(@"Exception in _handleTap: %@", e.reason);
@@ -346,8 +329,6 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
 
 - (void)handleHomeButtonTap {
     @try {
-        LMLog(@"handleHomeButtonTap fired | hasActiveState: %d | isOpening: %d",
-              gCurrentState != nil, gCurrentState.isOpening);
         if (gCurrentState && gCurrentState.isOpening) {
             CGRect iconFrame = gCurrentState.iconFrame;
             LMPlayTransition(iconFrame, nil, NO);
@@ -360,8 +341,30 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
 
 %end
 
+// 5. THEAM HIEU UNG ANIMATION CHUYEN DONG CHO THONG BAO (NOTIFICATION ALERTS)
+%hook NCNotificationShortLookView
+
+- (void)didMoveToWindow {
+    %orig;
+    if (self.window) {
+        self.transform = CGAffineTransformMakeScale(0.75, 0.75);
+        self.alpha = 0.0;
+        
+        [UIView animateWithDuration:0.45 
+                              delay:0.0 
+             usingSpringWithDamping:0.65 
+              initialSpringVelocity:0.8 
+                            options:UIViewAnimationOptionCurveEaseInOut 
+                         animations:^{
+            self.transform = CGAffineTransformIdentity;
+            self.alpha = 1.0;
+        } completion:nil];
+    }
+}
+
+%end
+
+// 6. INITIALIZER
 %ctor {
-    LMLog(@"=== LiquidMorph REAL v10 loaded | process: %@ | iOS %@ ===",
-          [[NSProcessInfo processInfo] processName],
-          [[UIDevice currentDevice] systemVersion]);
+    LMLog(@"=== LiquidMorph Ultra Loaded Safe Mode ===");
 }
