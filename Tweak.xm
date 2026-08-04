@@ -2,28 +2,13 @@
 #import <objc/runtime.h>
 #import <QuartzCore/QuartzCore.h>
 
-// ==========================================
-// 1. KHAI BÁO INTERFACE (SỬA LỖI FORWARD DECLARATION)
-// ==========================================
-
 @interface SBIconView : UIView
 @property (nonatomic, strong) id icon;
+- (UIImage *)generateSnapshot;
 @end
 
-// Khai báo class đầy đủ thay vì dùng @class
 @interface SBUIAnimationController : NSObject
-- (id)valueForKey:(NSString *)key;
 @end
-
-@interface SBUIWorkspaceAnimationController : SBUIAnimationController
-@end
-
-@interface SBWorkspaceApplicationSceneTransitionContext : NSObject
-@end
-
-// ==========================================
-// 2. BIẾN TOÀN CỤC & TÙY CHỈNH
-// ==========================================
 
 static UIWindow *gOverlayWindow = nil;
 static CGRect gLastTouchedIconFrame = CGRectZero;
@@ -31,10 +16,6 @@ static UIImage *gLastTouchedIconImage = nil;
 static BOOL gIsCustomAnimating = NO;
 
 #define LMLog(fmt, ...) NSLog(@"[LiquidMorph26] " fmt, ##__VA_ARGS__)
-
-// ==========================================
-// 3. CORE ANIMATION ENGINE (CHUẨN iOS 26 - 60 FPS)
-// ==========================================
 
 static void LMEnsureOverlayWindow(void) {
     if (!gOverlayWindow) {
@@ -65,7 +46,22 @@ static void LMClearOverlay(void) {
     gIsCustomAnimating = NO;
 }
 
-// Tạo Path Morphing uốn cong 4 cạnh mềm mại kiểu iOS 26
+static UIImage *LMExtractRealIconImage(SBIconView *iconView) {
+    if (!iconView) return nil;
+    @try {
+        if ([iconView respondsToSelector:@selector(generateSnapshot)]) {
+            UIImage *img = [iconView generateSnapshot];
+            if (img) return img;
+        }
+        UIGraphicsBeginImageContextWithOptions(iconView.bounds.size, NO, [UIScreen mainScreen].scale);
+        [iconView drawViewHierarchyInRect:iconView.bounds afterScreenUpdates:NO];
+        UIImage *img = UIGraphicsGetImageFromCurrentImageContext();
+        UIGraphicsEndImageContext();
+        if (img) return img;
+    } @catch (NSException *e) {}
+    return nil;
+}
+
 static CGPathRef LMCreateiOS26MorphPath(CGRect rect, CGFloat cornerRadius, CGFloat progress) {
     CGMutablePathRef path = CGPathCreateMutable();
     CGFloat w = rect.size.width;
@@ -74,9 +70,7 @@ static CGPathRef LMCreateiOS26MorphPath(CGRect rect, CGFloat cornerRadius, CGFlo
     CGFloat y = rect.origin.y;
 
     CGFloat r = MIN(cornerRadius, MIN(w, h) * 0.5);
-    
-    // Hiệu ứng phồng nhẹ (Fluid Bulge) giữa các cạnh
-    CGFloat bulge = sinf(progress * M_PI) * 16.0;
+    CGFloat bulge = sinf(progress * M_PI) * 18.0;
 
     CGPathMoveToPoint(path, NULL, x + r, y);
     CGPathAddQuadCurveToPoint(path, NULL, x + w / 2.0, y - bulge, x + w - r, y);
@@ -100,7 +94,7 @@ static void LMPerformiOS26Transition(CGRect iconFrame, UIImage *iconImage, BOOL 
     gIsCustomAnimating = YES;
 
     CGRect screenBounds = gOverlayWindow.bounds;
-    CGFloat duration = 0.52; // Tốc độ tiêu chuẩn mượt mà chuẩn iOS 26
+    CGFloat duration = 0.50;
 
     CAShapeLayer *maskLayer = [CAShapeLayer layer];
     maskLayer.frame = screenBounds;
@@ -111,19 +105,17 @@ static void LMPerformiOS26Transition(CGRect iconFrame, UIImage *iconImage, BOOL 
     
     if (iconImage) {
         contentLayer.contents = (__bridge id)iconImage.CGImage;
-    } else {
-        contentLayer.backgroundColor = [UIColor colorWithRed:0.07 green:0.47 blue:0.97 alpha:1.0].CGColor;
     }
     contentLayer.mask = maskLayer;
     [gOverlayWindow.layer addSublayer:contentLayer];
 
-    NSInteger steps = 12; // 12 keyframes tối ưu GPU render 60/120 FPS
+    NSInteger steps = 12;
     NSMutableArray *pathValues = [NSMutableArray arrayWithCapacity:steps + 1];
 
     CGRect startRect = isOpening ? iconFrame : screenBounds;
     CGRect endRect = isOpening ? screenBounds : iconFrame;
     CGFloat startRadius = isOpening ? 14.0 : 0.0;
-    CGFloat endRadius = isOpening ? 48.0 : 14.0;
+    CGFloat endRadius = isOpening ? 44.0 : 14.0;
 
     for (NSInteger i = 0; i <= steps; i++) {
         CGFloat progress = (CGFloat)i / (CGFloat)steps;
@@ -135,7 +127,6 @@ static void LMPerformiOS26Transition(CGRect iconFrame, UIImage *iconImage, BOOL 
         CGRect currentRect = CGRectMake(currentX, currentY, currentW, currentH);
 
         CGFloat currentRadius = startRadius + (endRadius - startRadius) * progress;
-        
         CGPathRef p = LMCreateiOS26MorphPath(currentRect, currentRadius, progress);
         [pathValues addObject:(__bridge_transfer id)p];
     }
@@ -155,22 +146,13 @@ static void LMPerformiOS26Transition(CGRect iconFrame, UIImage *iconImage, BOOL 
     });
 }
 
-// ==========================================
-// 4. HOOKS (AN TOÀN - KHÔNG SAFEMODE)
-// ==========================================
-
 %hook SBIconView
 
 - (void)_handleTap {
     @try {
         if (self.window) {
             gLastTouchedIconFrame = [self.window convertRect:self.bounds fromView:self];
-            if (self.layer.contents) {
-                gLastTouchedIconImage = [UIImage imageWithCGImage:(__bridge CGImageRef)self.layer.contents];
-            } else {
-                gLastTouchedIconImage = nil;
-            }
-            
+            gLastTouchedIconImage = LMExtractRealIconImage(self);
             LMPerformiOS26Transition(gLastTouchedIconFrame, gLastTouchedIconImage, YES);
         }
     } @catch (NSException *e) {}
@@ -179,25 +161,23 @@ static void LMPerformiOS26Transition(CGRect iconFrame, UIImage *iconImage, BOOL 
 
 %end
 
-// Hook ẩn animation gốc bằng ivar an toàn (Tránh Exception Safe Mode)
 %hook SBUIAnimationController
 
 - (void)_willBegin {
     %orig;
-    if (gIsCustomAnimating) {
-        @try {
-            Ivar ivar = class_getInstanceVariable([self class], "_containerView");
-            if (!ivar) {
-                ivar = class_getInstanceVariable(class_getSuperclass([self class]), "_containerView");
+    @try {
+        Ivar ivar = class_getInstanceVariable([self class], "_containerView");
+        if (!ivar) {
+            ivar = class_getInstanceVariable(class_getSuperclass([self class]), "_containerView");
+        }
+        if (ivar) {
+            UIView *containerView = object_getIvar(self, ivar);
+            if ([containerView isKindOfClass:[UIView class]]) {
+                containerView.hidden = YES;
+                containerView.alpha = 0.0;
             }
-            if (ivar) {
-                UIView *containerView = object_getIvar(self, ivar);
-                if ([containerView isKindOfClass:[UIView class]]) {
-                    containerView.alpha = 0.0;
-                }
-            }
-        } @catch (NSException *e) {}
-    }
+        }
+    } @catch (NSException *e) {}
 }
 
 - (void)_cleanupAnimation {
@@ -210,6 +190,7 @@ static void LMPerformiOS26Transition(CGRect iconFrame, UIImage *iconImage, BOOL 
         if (ivar) {
             UIView *containerView = object_getIvar(self, ivar);
             if ([containerView isKindOfClass:[UIView class]]) {
+                containerView.hidden = NO;
                 containerView.alpha = 1.0;
             }
         }
@@ -218,7 +199,6 @@ static void LMPerformiOS26Transition(CGRect iconFrame, UIImage *iconImage, BOOL 
 
 %end
 
-// Hook bắt sự kiện Thoát App
 %hook SBWorkspaceApplicationSceneTransitionContext
 
 - (void)setAnimationDisabled:(BOOL)disabled {
@@ -230,12 +210,8 @@ static void LMPerformiOS26Transition(CGRect iconFrame, UIImage *iconImage, BOOL 
 
 %end
 
-// ==========================================
-// 5. INITIALIZER
-// ==========================================
-
 %ctor {
     @autoreleasepool {
-        LMLog(@"LiquidMorph iOS 26 loaded cleanly without compilation errors.");
+        LMLog(@"LiquidMorph iOS 26 Clean Edition loaded.");
     }
 }
