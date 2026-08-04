@@ -21,8 +21,7 @@ static void LMLog(NSString *format, ...) {
             [handle writeData:[line dataUsingEncoding:NSUTF8StringEncoding]];
             [handle closeFile];
         }
-    } @catch (NSException *e) { NSLog(@"[LiquidMorph] Log write failed: %@", e.reason); }
-    NSLog(@"[LiquidMorph] %@", message);
+    } @catch (NSException *e) {}
 }
 
 static CGPathRef LMRoundedQuadPath(CGPoint tl, CGPoint tr, CGPoint br, CGPoint bl,
@@ -247,7 +246,6 @@ static void LMEnsureWindow(void) {
 }
 
 static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening) {
-    // Nếu đang chạy hiệu ứng mở/đóng dở dang, cho phép reset để tránh kẹt trạng thái màn hình đen
     if (gIsCustomTransitionActive) {
         LMForceClearOverlay();
     }
@@ -261,7 +259,6 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
     }
 
     CGRect screen = gOverlayWindow.bounds;
-    // Tăng tốc độ mượt mà hơn (giảm thời lượng xuống 0.55s để chuẩn xác như hiệu ứng iOS gốc)
     CGFloat duration = 0.55;
 
     CALayer *backdrop = [CALayer layer];
@@ -358,10 +355,8 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
 
         UIImage *iconImage = LMRenderIconImage(self);
         
-        // Gọi thẳng hiệu ứng phóng to liquid morph đồng thời chặn hiệu ứng gốc của iOS
         LMPlayTransition(frameInWindow, iconImage, YES);
         
-        // Thực thi lệnh mở app gốc ngầm bên dưới mà không bị xung đột khung hình đen
         %orig;
         return;
     } @catch (NSException *e) {}
@@ -370,13 +365,10 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
 
 %end
 
-// Hook bắt sự kiện vuốt Home / đóng app từ SpringBoard Workspace để kích hoạt hiệu ứng thu nhỏ ngược lại đúng vị trí icon
-@interface SBWorkspaceTransitionRequest
-@end
-
+// Sử dụng kiểu 'id' thay cho 'SBWorkspaceTransitionRequest *' để khắc phục triệt để lỗi biên dịch unknown type name
 %hook SBMainWorkspace
 
-- (void)executeTransitionRequest:(SBWorkspaceTransitionRequest *)request withCompletion:(id)completion {
+- (void)executeTransitionRequest:(id)request withCompletion:(id)completion {
     @try {
         NSString *reqDesc = [request description];
         if ([reqDesc containsString:@"Deactivating"] || [reqDesc containsString:@"dismiss"] || [reqDesc containsString:@"to-homescreen"]) {
@@ -391,5 +383,5 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
 %end
 
 %ctor {
-    LMLog(@"=== LiquidMorph v10.7 Perfect Sync Loaded ===");
+    LMLog(@"=== LiquidMorph v10.8 Compile Fix Loaded ===");
 }
