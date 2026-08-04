@@ -95,7 +95,7 @@ static UIImage *LMRenderIconImage(UIView *iconView) {
 static UIWindow *gOverlayWindow = nil;
 static CGRect gLastOpenedIconFrame = CGRectZero;
 static UIImage *gLastOpenedIconImage = nil;
-static BOOL gIsCustomTransitionActive = NO;
+static BOOL gIsTransitionRunning = NO;
 
 static void LMForceClearOverlay(void) {
     if (gOverlayWindow) {
@@ -104,13 +104,13 @@ static void LMForceClearOverlay(void) {
             [l removeFromSuperlayer];
         }
     }
-    gIsCustomTransitionActive = NO;
+    gIsTransitionRunning = NO;
 }
 
 static void LMEnsureWindow(void) {
     if (gOverlayWindow) return;
     gOverlayWindow = [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
-    gOverlayWindow.windowLevel = UIWindowLevelStatusBar + 3000;
+    gOverlayWindow.windowLevel = UIWindowLevelStatusBar + 9999;
     gOverlayWindow.userInteractionEnabled = NO;
     gOverlayWindow.backgroundColor = [UIColor clearColor];
     if (@available(iOS 13.0, *)) {
@@ -201,12 +201,11 @@ static NSArray *LMBuildKeyframePaths(CGRect iconFrame, CGRect screen, BOOL openi
     return paths;
 }
 
-static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening) {
-    // Dọn dẹp lập tức layer cũ để tránh xung đột khung hình hoặc kẹt màn hình đen khi bấm nhanh liên tục
+static void LMRunTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening, void(^completion)(void)) {
     LMForceClearOverlay();
     LMEnsureWindow();
 
-    gIsCustomTransitionActive = YES;
+    gIsTransitionRunning = YES;
     if (opening && !CGRectIsEmpty(iconFrame)) {
         gLastOpenedIconFrame = iconFrame;
         if (iconImage) {
@@ -215,9 +214,8 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
     }
 
     CGRect screen = gOverlayWindow.bounds;
-    CGFloat duration = 0.55;
+    CGFloat duration = 0.52;
 
-    // Lớp nền trong suốt hoàn toàn, triệt tiêu mọi khung đen
     CALayer *backdrop = [CALayer layer];
     backdrop.frame = screen;
     backdrop.backgroundColor = [UIColor clearColor].CGColor;
@@ -229,12 +227,12 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
     CALayer *iconLayer = [CALayer layer];
     iconLayer.frame = screen;
     iconLayer.contentsGravity = kCAGravityResizeAspectFill;
-    
+
     UIImage *targetImg = opening ? iconImage : (gLastOpenedIconImage ? gLastOpenedIconImage : iconImage);
     if (targetImg) {
         iconLayer.contents = (__bridge id)targetImg.CGImage;
     } else {
-        iconLayer.backgroundColor = [UIColor colorWithWhite:0.85 alpha:1.0].CGColor;
+        iconLayer.backgroundColor = [UIColor colorWithWhite:0.90 alpha:1.0].CGColor;
     }
     iconLayer.mask = maskShape;
     [gOverlayWindow.layer addSublayer:iconLayer];
@@ -252,9 +250,11 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
     maskShape.path = (__bridge CGPathRef)paths.lastObject;
     [maskShape addAnimation:pathAnim forKey:@"morph"];
 
-    // Sau khi hiệu ứng hoàn tất, dọn dẹp sạch sẽ layer ngay lập tức để lộ nội dung app mượt mà không bị lẹm khung đen
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(duration * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         LMForceClearOverlay();
+        if (completion) {
+            completion();
+        }
     });
 }
 
@@ -281,7 +281,14 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
         CGRect frameInWindow = [self.window convertRect:self.bounds fromView:self];
         if (!CGRectIsEmpty(frameInWindow) && frameInWindow.size.width >= 10) {
             UIImage *iconImage = LMRenderIconImage(self);
-            LMPlayTransition(frameInWindow, iconImage, YES);
+
+            LMRunTransition(frameInWindow, iconImage, YES, ^{
+            });
+
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.04 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                %orig;
+            });
+            return;
         }
     } @catch (NSException *e) {}
     %orig;
@@ -289,15 +296,14 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
 
 %end
 
-// Bắt chính xác sự kiện vuốt Home / đóng ứng dụng từ SpringBoard Workspace để kích hoạt hiệu ứng thu nhỏ ngược lại
 %hook SBMainWorkspace
 
 - (void)executeTransitionRequest:(id)request withCompletion:(id)completion {
     @try {
         NSString *reqDesc = [request description];
         if ([reqDesc containsString:@"Deactivating"] || [reqDesc containsString:@"dismiss"] || [reqDesc containsString:@"to-homescreen"]) {
-            if (!gIsCustomTransitionActive && !CGRectIsEmpty(gLastOpenedIconFrame)) {
-                LMPlayTransition(gLastOpenedIconFrame, gLastOpenedIconImage, NO);
+            if (!gIsTransitionRunning && !CGRectIsEmpty(gLastOpenedIconFrame)) {
+                LMRunTransition(gLastOpenedIconFrame, gLastOpenedIconImage, NO, nil);
             }
         }
     } @catch (NSException *e) {}
@@ -307,5 +313,5 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
 %end
 
 %ctor {
-    LMLog(@"=== LiquidMorph v10.9 Final Clean Loaded ===");
+    LMLog(@"=== LiquidMorph v12.1 Pure ASCII Loaded ===");
 }
