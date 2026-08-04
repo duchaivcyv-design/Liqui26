@@ -2,67 +2,90 @@
 #import <objc/runtime.h>
 #import <QuartzCore/QuartzCore.h>
 
+// ==========================================
+// 1. INTERFACE DECLARATIONS
+// ==========================================
+
 @interface SBIconView : UIView
 @property (nonatomic, strong) id icon;
 - (UIImage *)generateSnapshot;
 @end
 
 @interface SBUIAnimationController : NSObject
+@property (nonatomic, readonly) UIView *containerView;
 @end
 
-static UIWindow *gOverlayWindow = nil;
-static CGRect gLastTouchedIconFrame = CGRectZero;
-static UIImage *gLastTouchedIconImage = nil;
-static BOOL gIsCustomAnimating = NO;
+// ==========================================
+// 2. GLOBAL VARIABLES & STATE TRACKING
+// ==========================================
 
-#define LMLog(fmt, ...) NSLog(@"[LiquidMorph26] " fmt, ##__VA_ARGS__)
+static UIWindow *gLiquidMorphWindow = nil;
+static CGRect gCachedIconFrame = CGRectZero;
+static UIImage *gCachedIconImage = nil;
+static BOOL gIsPerformingCustomTransition = NO;
 
-static void LMEnsureOverlayWindow(void) {
-    if (!gOverlayWindow) {
-        gOverlayWindow = [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
-        gOverlayWindow.windowLevel = UIWindowLevelStatusBar + 2000;
-        gOverlayWindow.userInteractionEnabled = NO;
-        gOverlayWindow.backgroundColor = [UIColor clearColor];
+#define LM_LOG(fmt, ...) NSLog(@"[LiquidMorph26_Full] " fmt, ##__VA_ARGS__)
+
+// ==========================================
+// 3. OVERLAY WINDOW MANAGEMENT
+// ==========================================
+
+static void LMInitializeOverlayWindow(void) {
+    if (!gLiquidMorphWindow) {
+        gLiquidMorphWindow = [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
+        gLiquidMorphWindow.windowLevel = UIWindowLevelStatusBar + 3000;
+        gLiquidMorphWindow.userInteractionEnabled = NO;
+        gLiquidMorphWindow.backgroundColor = [UIColor clearColor];
     }
     
     if (@available(iOS 13.0, *)) {
         for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
             if ([scene isKindOfClass:[UIWindowScene class]] && scene.activationState == UISceneActivationStateForegroundActive) {
-                gOverlayWindow.windowScene = (UIWindowScene *)scene;
+                gLiquidMorphWindow.windowScene = (UIScene *)scene;
                 break;
             }
         }
     }
-    gOverlayWindow.hidden = NO;
+    gLiquidMorphWindow.hidden = NO;
 }
 
-static void LMClearOverlay(void) {
-    if (gOverlayWindow) {
-        gOverlayWindow.hidden = YES;
-        for (CALayer *layer in [gOverlayWindow.layer.sublayers copy]) {
-            [layer removeFromSuperlayer];
+static void LMDestroyOverlayWindow(void) {
+    if (gLiquidMorphWindow) {
+        gLiquidMorphWindow.hidden = YES;
+        for (CALayer *sublayer in [gLiquidMorphWindow.layer.sublayers copy]) {
+            [sublayer removeFromSuperlayer];
         }
     }
-    gIsCustomAnimating = NO;
+    gIsPerformingCustomTransition = NO;
 }
 
-static UIImage *LMExtractRealIconImage(SBIconView *iconView) {
+// ==========================================
+// 4. ICON SNAPSHOT HELPER
+// ==========================================
+
+static UIImage *LMExtractIconImageSafe(SBIconView *iconView) {
     if (!iconView) return nil;
     @try {
         if ([iconView respondsToSelector:@selector(generateSnapshot)]) {
-            UIImage *img = [iconView generateSnapshot];
-            if (img) return img;
+            UIImage *snapshot = [iconView generateSnapshot];
+            if (snapshot) return snapshot;
         }
         UIGraphicsBeginImageContextWithOptions(iconView.bounds.size, NO, [UIScreen mainScreen].scale);
         [iconView drawViewHierarchyInRect:iconView.bounds afterScreenUpdates:NO];
-        UIImage *img = UIGraphicsGetImageFromCurrentImageContext();
+        UIImage *snapshot = UIGraphicsGetImageFromCurrentImageContext();
         UIGraphicsEndImageContext();
-        if (img) return img;
-    } @catch (NSException *e) {}
+        if (snapshot) return snapshot;
+    } @catch (NSException *exception) {
+        LM_LOG(@"Error extracting icon image: %@", exception.reason);
+    }
     return nil;
 }
 
-static CGPathRef LMCreateiOS26MorphPath(CGRect rect, CGFloat cornerRadius, CGFloat progress) {
+// ==========================================
+// 5. iOS 26 FLUID MORPH PATH ALGORITHM
+// ==========================================
+
+static CGPathRef LMCreateFluidMorphPath(CGRect rect, CGFloat cornerRadius, CGFloat progress) {
     CGMutablePathRef path = CGPathCreateMutable();
     CGFloat w = rect.size.width;
     CGFloat h = rect.size.height;
@@ -70,34 +93,38 @@ static CGPathRef LMCreateiOS26MorphPath(CGRect rect, CGFloat cornerRadius, CGFlo
     CGFloat y = rect.origin.y;
 
     CGFloat r = MIN(cornerRadius, MIN(w, h) * 0.5);
-    CGFloat bulge = sinf(progress * M_PI) * 18.0;
+    CGFloat fluidBulge = sinf(progress * M_PI) * 16.0;
 
     CGPathMoveToPoint(path, NULL, x + r, y);
-    CGPathAddQuadCurveToPoint(path, NULL, x + w / 2.0, y - bulge, x + w - r, y);
+    CGPathAddQuadCurveToPoint(path, NULL, x + w * 0.5, y - fluidBulge, x + w - r, y);
     CGPathAddArcToPoint(path, NULL, x + w, y, x + w, y + r, r);
     
-    CGPathAddQuadCurveToPoint(path, NULL, x + w + bulge, y + h / 2.0, x + w, y + h - r);
+    CGPathAddQuadCurveToPoint(path, NULL, x + w + fluidBulge, y + h * 0.5, x + w, y + h - r);
     CGPathAddArcToPoint(path, NULL, x + w, y + h, x + w - r, y + h, r);
     
-    CGPathAddQuadCurveToPoint(path, NULL, x + w / 2.0, y + h + bulge, x + r, y + h);
+    CGPathAddQuadCurveToPoint(path, NULL, x + w * 0.5, y + h + fluidBulge, x + r, y + h);
     CGPathAddArcToPoint(path, NULL, x, y + h, x, y + h - r, r);
     
-    CGPathAddQuadCurveToPoint(path, NULL, x - bulge, y + h / 2.0, x, y + r);
+    CGPathAddQuadCurveToPoint(path, NULL, x - fluidBulge, y + h * 0.5, x, y + r);
     CGPathAddArcToPoint(path, NULL, x, y, x + r, y, r);
 
     CGPathCloseSubpath(path);
     return path;
 }
 
-static void LMPerformiOS26Transition(CGRect iconFrame, UIImage *iconImage, BOOL isOpening) {
-    LMEnsureOverlayWindow();
-    gIsCustomAnimating = YES;
+// ==========================================
+// 6. ANIMATION PLAYER ENGINE
+// ==========================================
 
-    CGRect screenBounds = gOverlayWindow.bounds;
-    CGFloat duration = 0.50;
+static void LMExecuteTransitionAnimation(CGRect targetIconFrame, UIImage *iconImage, BOOL isOpening) {
+    LMInitializeOverlayWindow();
+    gIsPerformingCustomTransition = YES;
 
-    CAShapeLayer *maskLayer = [CAShapeLayer layer];
-    maskLayer.frame = screenBounds;
+    CGRect screenBounds = gLiquidMorphWindow.bounds;
+    CGFloat animationDuration = 0.48;
+
+    CAShapeLayer *maskShapeLayer = [CAShapeLayer layer];
+    maskShapeLayer.frame = screenBounds;
 
     CALayer *contentLayer = [CALayer layer];
     contentLayer.frame = screenBounds;
@@ -106,56 +133,62 @@ static void LMPerformiOS26Transition(CGRect iconFrame, UIImage *iconImage, BOOL 
     if (iconImage) {
         contentLayer.contents = (__bridge id)iconImage.CGImage;
     }
-    contentLayer.mask = maskLayer;
-    [gOverlayWindow.layer addSublayer:contentLayer];
+    contentLayer.mask = maskShapeLayer;
+    [gLiquidMorphWindow.layer addSublayer:contentLayer];
 
-    NSInteger steps = 12;
-    NSMutableArray *pathValues = [NSMutableArray arrayWithCapacity:steps + 1];
+    NSInteger totalSteps = 12;
+    NSMutableArray *pathArray = [NSMutableArray arrayWithCapacity:totalSteps + 1];
 
-    CGRect startRect = isOpening ? iconFrame : screenBounds;
-    CGRect endRect = isOpening ? screenBounds : iconFrame;
+    CGRect startRect = isOpening ? targetIconFrame : screenBounds;
+    CGRect endRect = isOpening ? screenBounds : targetIconFrame;
     CGFloat startRadius = isOpening ? 14.0 : 0.0;
     CGFloat endRadius = isOpening ? 44.0 : 14.0;
 
-    for (NSInteger i = 0; i <= steps; i++) {
-        CGFloat progress = (CGFloat)i / (CGFloat)steps;
+    for (NSInteger step = 0; step <= totalSteps; step++) {
+        CGFloat progressValue = (CGFloat)step / (CGFloat)totalSteps;
         
-        CGFloat currentX = startRect.origin.x + (endRect.origin.x - startRect.origin.x) * progress;
-        CGFloat currentY = startRect.origin.y + (endRect.origin.y - startRect.origin.y) * progress;
-        CGFloat currentW = startRect.size.width + (endRect.size.width - startRect.size.width) * progress;
-        CGFloat currentH = startRect.size.height + (endRect.size.height - startRect.size.height) * progress;
-        CGRect currentRect = CGRectMake(currentX, currentY, currentW, currentH);
+        CGFloat currentX = startRect.origin.x + (endRect.origin.x - startRect.origin.x) * progressValue;
+        CGFloat currentY = startRect.origin.y + (endRect.origin.y - startRect.origin.y) * progressValue;
+        CGFloat currentW = startRect.size.width + (endRect.size.width - startRect.size.width) * progressValue;
+        CGFloat currentH = startRect.size.height + (endRect.size.height - startRect.size.height) * progressValue;
+        CGRect currentFrameRect = CGRectMake(currentX, currentY, currentW, currentH);
 
-        CGFloat currentRadius = startRadius + (endRadius - startRadius) * progress;
-        CGPathRef p = LMCreateiOS26MorphPath(currentRect, currentRadius, progress);
-        [pathValues addObject:(__bridge_transfer id)p];
+        CGFloat currentRadiusValue = startRadius + (endRadius - startRadius) * progressValue;
+        CGPathRef pathReference = LMCreateFluidMorphPath(currentFrameRect, currentRadiusValue, progressValue);
+        [pathArray addObject:(__bridge_transfer id)pathReference];
     }
 
-    CAKeyframeAnimation *morphAnim = [CAKeyframeAnimation animationWithKeyPath:@"path"];
-    morphAnim.values = pathValues;
-    morphAnim.duration = duration;
-    morphAnim.timingFunction = [CAMediaTimingFunction functionWithControlPoints:0.16 :1.0 :0.3 :1.0];
-    morphAnim.fillMode = kCAFillModeForwards;
-    morphAnim.removedOnCompletion = NO;
+    CAKeyframeAnimation *morphAnimation = [CAKeyframeAnimation animationWithKeyPath:@"path"];
+    morphAnimation.values = pathArray;
+    morphAnimation.duration = animationDuration;
+    morphAnimation.timingFunction = [CAMediaTimingFunction functionWithControlPoints:0.16 :1.0 :0.3 :1.0];
+    morphAnimation.fillMode = kCAFillModeForwards;
+    morphAnimation.removedOnCompletion = NO;
 
-    maskLayer.path = (__bridge CGPathRef)pathValues.lastObject;
-    [maskLayer addAnimation:morphAnim forKey:@"iOS26Morph"];
+    maskShapeLayer.path = (__bridge CGPathRef)pathArray.lastObject;
+    [maskShapeLayer addAnimation:morphAnimation forKey:@"iOS26FluidMorphKey"];
 
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(duration * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        LMClearOverlay();
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(animationDuration * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        LMDestroyOverlayWindow();
     });
 }
+
+// ==========================================
+// 7. HOOK IMPLEMENTATIONS
+// ==========================================
 
 %hook SBIconView
 
 - (void)_handleTap {
     @try {
         if (self.window) {
-            gLastTouchedIconFrame = [self.window convertRect:self.bounds fromView:self];
-            gLastTouchedIconImage = LMExtractRealIconImage(self);
-            LMPerformiOS26Transition(gLastTouchedIconFrame, gLastTouchedIconImage, YES);
+            gCachedIconFrame = [self.window convertRect:self.bounds fromView:self];
+            gCachedIconImage = LMExtractIconImageSafe(self);
+            LMExecuteTransitionAnimation(gCachedIconFrame, gCachedIconImage, YES);
         }
-    } @catch (NSException *e) {}
+    } @catch (NSException *exception) {
+        LM_LOG(@"Exception in _handleTap: %@", exception.reason);
+    }
     %orig;
 }
 
@@ -165,36 +198,26 @@ static void LMPerformiOS26Transition(CGRect iconFrame, UIImage *iconImage, BOOL 
 
 - (void)_willBegin {
     %orig;
-    @try {
-        Ivar ivar = class_getInstanceVariable([self class], "_containerView");
-        if (!ivar) {
-            ivar = class_getInstanceVariable(class_getSuperclass([self class]), "_containerView");
-        }
-        if (ivar) {
-            UIView *containerView = object_getIvar(self, ivar);
-            if ([containerView isKindOfClass:[UIView class]]) {
-                containerView.hidden = YES;
-                containerView.alpha = 0.0;
+    if (gIsPerformingCustomTransition) {
+        @try {
+            UIView *container = [self containerView];
+            if (container) {
+                container.hidden = YES;
+                container.alpha = 0.0;
             }
-        }
-    } @catch (NSException *e) {}
+        } @catch (NSException *exception) {}
+    }
 }
 
 - (void)_cleanupAnimation {
     %orig;
     @try {
-        Ivar ivar = class_getInstanceVariable([self class], "_containerView");
-        if (!ivar) {
-            ivar = class_getInstanceVariable(class_getSuperclass([self class]), "_containerView");
+        UIView *container = [self containerView];
+        if (container) {
+            container.hidden = NO;
+            container.alpha = 1.0;
         }
-        if (ivar) {
-            UIView *containerView = object_getIvar(self, ivar);
-            if ([containerView isKindOfClass:[UIView class]]) {
-                containerView.hidden = NO;
-                containerView.alpha = 1.0;
-            }
-        }
-    } @catch (NSException *e) {}
+    } @catch (NSException *exception) {}
 }
 
 %end
@@ -202,16 +225,20 @@ static void LMPerformiOS26Transition(CGRect iconFrame, UIImage *iconImage, BOOL 
 %hook SBWorkspaceApplicationSceneTransitionContext
 
 - (void)setAnimationDisabled:(BOOL)disabled {
-    if (gLastTouchedIconFrame.size.width > 0 && !gIsCustomAnimating) {
-        LMPerformiOS26Transition(gLastTouchedIconFrame, gLastTouchedIconImage, NO);
+    if (gCachedIconFrame.size.width > 0 && !gIsPerformingCustomTransition) {
+        LMExecuteTransitionAnimation(gCachedIconFrame, gCachedIconImage, NO);
     }
     %orig(disabled);
 }
 
 %end
 
+// ==========================================
+// 8. MODULE CONSTRUCTOR
+// ==========================================
+
 %ctor {
     @autoreleasepool {
-        LMLog(@"LiquidMorph iOS 26 Clean Edition loaded.");
+        LM_LOG(@"LiquidMorph iOS 26 Full Extension Initialized Successfully.");
     }
 }
