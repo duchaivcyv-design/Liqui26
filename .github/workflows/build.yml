@@ -9,52 +9,23 @@ jobs:
   build:
     name: Build .deb and Repo
     runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/theos/theos:latest
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential fakeroot rsync curl git perl dpkg-dev bzip2 zstd
-
-      - name: Install Theos
-        env:
-          THEOS: ${{ github.workspace }}/theos
-        run: |
-          sudo apt-get install -y libtinfo5 || true
-          git clone --recursive https://github.com/theos/theos.git "$THEOS"
-
-          mkdir -p "$THEOS/sdks"
-          curl -LO https://github.com/theos/sdks/archive/master.zip
-          unzip -q master.zip
-          mv sdks-master/*.sdk "$THEOS/sdks/"
-          rm -rf master.zip sdks-master
-
-          mkdir -p "$THEOS/toolchain/"
-          curl -SL https://github.com/L1ghtmann/llvm-project/releases/latest/download/iOSToolchain-Linux.tar.xz -o toolchain.tar.xz
-          tar -xf toolchain.tar.xz -C "$THEOS/toolchain/"
-          rm -rf toolchain.tar.xz
-
       - name: Build package
-        env:
-          THEOS: ${{ github.workspace }}/theos
         run: |
-          export PATH="$THEOS/bin:$THEOS/toolchain/linux/iphone/bin:$PATH"
           make package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless
 
       - name: Make Repository Files for Sileo & Find Deb
-        id: find_deb
         run: |
           mkdir -p public/debs
           
           find . -maxdepth 2 -name "*.deb" ! -path "./public/*" -exec cp {} public/debs/ \;
           
-          DEB_PATH=$(find public/debs -name "*.deb" | head -n1)
-          echo "deb_path=$DEB_PATH" >> "$GITHUB_OUTPUT"
-          echo "Đã tìm thấy và xử lý file: $DEB_PATH"
-
           cd public
           dpkg-scanpackages -m debs /dev/null > Packages
           bzip2 -9 -c Packages > Packages.bz2
