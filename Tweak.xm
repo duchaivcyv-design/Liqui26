@@ -2,7 +2,6 @@
 #import <objc/runtime.h>
 #import <QuartzCore/QuartzCore.h>
 
-// 1. DUONG DAN LOG AN TOAN CHO ROOTLESS & iOS 15+
 static NSString *getSafeLogPath(void) {
     return [NSTemporaryDirectory() stringByAppendingPathComponent:@"LiquidMorph.log"];
 }
@@ -29,7 +28,6 @@ static void LMLog(NSString *format, ...) {
     NSLog(@"[LiquidMorph] %@", message);
 }
 
-// 2. CAC HAM TINH TOAN MORPHING & MATH
 static CGPathRef LMRoundedQuadPath(CGPoint tl, CGPoint tr, CGPoint br, CGPoint bl,
                                     CGFloat rTL, CGFloat rTR, CGFloat rBR, CGFloat rBL) {
     NSArray *points = @[[NSValue valueWithCGPoint:tl], [NSValue valueWithCGPoint:tr],
@@ -75,7 +73,7 @@ static CGFloat LMEdgeProgress(CGFloat t, CGFloat closeness, CGFloat maxDelay) {
 static CGFloat LMHumpRadius(CGFloat t) {
     CGFloat iconRadius = 13.0;
     CGFloat peakRadius = 100.0;
-    CGFloat endRadius = 0.0; // Phong kín góc màn hình mở app
+    CGFloat endRadius = 0.0;
     if (t < 0.45) {
         CGFloat local = t / 0.45;
         return iconRadius + (peakRadius - iconRadius) * local;
@@ -228,7 +226,6 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
     LMEnsureWindow();
 
     CGRect screen = gOverlayWindow.bounds;
-    // Fast duration (0.32s) de dong bo mượt mà voi App ra giao dien full
     CGFloat duration = 0.32; 
 
     CALayer *backdrop = [CALayer layer];
@@ -270,7 +267,6 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
     state.isOpening = opening;
     gCurrentState = state;
 
-    // Tu dong don dẹp overlay ngay khi het thoi gian
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(duration * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         if (gCurrentState == state) {
             LMForceClearOverlay();
@@ -278,18 +274,44 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
     });
 }
 
-// 3. AN HIEU UNG GOC SPRINGBOARD (PREVENT CONFLICT & DUPLICATE ANIMATION)
+@interface SBUIAnimationController : NSObject
+@property (nonatomic, assign) CGFloat animationDuration;
+@end
+
 %hook SBUIAnimationController
 - (void)_willBegin {
     %orig;
-    // An hieu ung goc mo/dong app khi LiquidMorph dang chay
     if (gCurrentState) {
-        [self setValue:@(0.01) forKey:@"animationDuration"];
+        self.animationDuration = 0.01;
     }
 }
 %end
 
-// 4. HOOK ICON TAP OPEN / CLOSE APP
+@interface NCNotificationShortLookView : UIView
+@end
+
+%hook NCNotificationShortLookView
+
+- (void)didMoveToWindow {
+    %orig;
+    if (self.window) {
+        self.transform = CGAffineTransformMakeScale(0.75, 0.75);
+        self.alpha = 0.0;
+        
+        [UIView animateWithDuration:0.45 
+                              delay:0.0 
+             usingSpringWithDamping:0.65 
+              initialSpringVelocity:0.8 
+                            options:UIViewAnimationOptionCurveEaseInOut 
+                         animations:^{
+            self.transform = CGAffineTransformIdentity;
+            self.alpha = 1.0;
+        } completion:nil];
+    }
+}
+
+%end
+
 @interface SBIconView : UIView
 - (id)icon;
 @end
@@ -341,30 +363,6 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
 
 %end
 
-// 5. THEAM HIEU UNG ANIMATION CHUYEN DONG CHO THONG BAO (NOTIFICATION ALERTS)
-%hook NCNotificationShortLookView
-
-- (void)didMoveToWindow {
-    %orig;
-    if (self.window) {
-        self.transform = CGAffineTransformMakeScale(0.75, 0.75);
-        self.alpha = 0.0;
-        
-        [UIView animateWithDuration:0.45 
-                              delay:0.0 
-             usingSpringWithDamping:0.65 
-              initialSpringVelocity:0.8 
-                            options:UIViewAnimationOptionCurveEaseInOut 
-                         animations:^{
-            self.transform = CGAffineTransformIdentity;
-            self.alpha = 1.0;
-        } completion:nil];
-    }
-}
-
-%end
-
-// 6. INITIALIZER
 %ctor {
     LMLog(@"=== LiquidMorph Ultra Loaded Safe Mode ===");
 }
