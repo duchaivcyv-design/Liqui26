@@ -17,32 +17,25 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential fakeroot rsync curl git perl dpkg-dev bzip2 zstd unzip xz-utils
+          sudo apt-get install -y build-essential fakeroot rsync curl git perl dpkg-dev bzip2 zstd unzip xz-utils clang
 
-      - name: Install Theos & Toolchain
+      - name: Install Theos & SDK
         env:
           THEOS: ${{ github.workspace }}/theos
         run: |
           git clone --recursive https://github.com/theos/theos.git "$THEOS"
           
-          # Tải SDK chuẩn
           mkdir -p "$THEOS/sdks"
           curl -LO https://github.com/theos/sdks/archive/master.zip
           unzip -q master.zip
           mv sdks-master/*.sdk "$THEOS/sdks/"
           rm -rf master.zip sdks-master
 
-          # Tải Toolchain Linux (Clang) chính thức cho Theos
-          mkdir -p "$THEOS/toolchain/"
-          curl -SL https://github.com/L1ghtmann/llvm-project/releases/latest/download/iOSToolchain-Linux.tar.xz -o toolchain.tar.xz
-          tar -xf toolchain.tar.xz -C "$THEOS/toolchain/"
-          rm -rf toolchain.tar.xz
-
       - name: Build package
         env:
           THEOS: ${{ github.workspace }}/theos
         run: |
-          export PATH="$THEOS/bin:$THEOS/toolchain/linux/iphone/bin:$PATH"
+          export PATH="$THEOS/bin:$PATH"
           make package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless
 
       - name: Make Repository Files for Sileo & Find Deb
