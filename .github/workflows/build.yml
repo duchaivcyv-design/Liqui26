@@ -3,11 +3,11 @@ name: Build LiquidMorph tweak
 on:
   push:
     branches: [main, master]
-  workflow_dispatch: {}
+  workflow_dispatch: ()
 
 jobs:
   build:
-    name: Build .deb
+    name: Build .deb and Repo
     runs-on: ubuntu-latest
 
     steps:
@@ -17,14 +17,13 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential fakeroot rsync curl git perl libplist-utils
+          sudo apt-get install -y build-essential fakeroot rsync curl git perl dpkg-dev bzip2 zstd
 
       - name: Install Theos
         env:
           THEOS: ${{ github.workspace }}/theos
         run: |
-          sudo apt-get install -y libtinfo6 || sudo apt-get install -y libtinfo5 || true
-
+          sudo apt-get install -y libtinfo5 || true
           git clone --recursive https://github.com/theos/theos.git "$THEOS"
 
           mkdir -p "$THEOS/sdks"
@@ -34,7 +33,9 @@ jobs:
           rm -rf master.zip sdks-master
 
           mkdir -p "$THEOS/toolchain/"
-          curl -sL https://github.com/L1ghtmann/llvm-project/releases/latest/download/iOSToolchain-x86_64.tar.xz | tar -xJf - -C "$THEOS/toolchain/"
+          curl -SL https://github.com/L1ghtmann/llvm-project/releases/latest/download/iOSToolchain-Linux.tar.xz -o toolchain.tar.xz
+          tar -xf toolchain.tar.xz -C "$THEOS/toolchain/"
+          rm -rf toolchain.tar.xz
 
       - name: Build package
         env:
@@ -43,16 +44,30 @@ jobs:
           export PATH="$THEOS/bin:$THEOS/toolchain/linux/iphone/bin:$PATH"
           make package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless
 
-      - name: Find built .deb
-        id: find_deb
+      - name: Make Repository Files for Sileo
         run: |
-          DEB_PATH=$(find packages -name "*.deb" | head -n1)
-          echo "deb_path=$DEB_PATH" >> "$GITHUB_OUTPUT"
-          echo "Đã build xong: $DEB_PATH"
+          mkdir -p public/debs
+          find . -name "*.deb" -exec cp {} public/debs/ \;
+          
+          cd public
+          dpkg-scanpackages -m debs /dev/null > Packages
+          bzip2 -9 -c Packages > Packages.bz2
+          zstd -c Packages > Packages.zst
+          
+          cat << 'EOF' > Release
+          Origin: LiquidMorph Repo
+          Label: LiquidMorph Repo
+          Suite: stable
+          Version: 1.0
+          Codename: ios
+          Architectures: iphoneos-arm64
+          Components: main
+          Description: Repository for LiquidMorph Tweak
+          EOF
+          cd ..
 
-      - name: Upload .deb as artifact
+      - name: Upload Repository Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: LiquidMorph-deb
-          path: ${{ steps.find_deb.outputs.deb_path }}
-          if-no-files-found: error
+          name: repository
+          path: public/
