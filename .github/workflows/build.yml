@@ -3,7 +3,7 @@ name: Build LiquidMorph tweak
 on:
   push:
     branches: [main, master]
-  workflow_dispatch: ()
+  workflow_dispatch:
 
 jobs:
   build:
@@ -49,15 +49,12 @@ jobs:
         run: |
           mkdir -p public/debs
           
-          # Tự động tìm file .deb ở cả thư mục gốc lẫn thư mục packages
           find . -maxdepth 2 -name "*.deb" ! -path "./public/*" -exec cp {} public/debs/ \;
           
-          # Xuất đường dẫn để upload artifact đơn lẻ nếu cần
           DEB_PATH=$(find public/debs -name "*.deb" | head -n1)
           echo "deb_path=$DEB_PATH" >> "$GITHUB_OUTPUT"
           echo "Đã tìm thấy và xử lý file: $DEB_PATH"
 
-          # Tạo kho Packages chuẩn chống lỗi Sileo
           cd public
           dpkg-scanpackages -m debs /dev/null > Packages
           bzip2 -9 -c Packages > Packages.bz2
