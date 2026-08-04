@@ -3,11 +3,8 @@
 #import <QuartzCore/QuartzCore.h>
 
 // ==========================================
-// 1. KHAI BÁO INTERFACE (SỬA LỖI FORWARD CLASS)
+// 1. INTERFACE DECLARATIONS
 // ==========================================
-
-@interface SBUIAnimationController : NSObject
-@end
 
 @interface SBIconView : UIView
 @property (nonatomic, strong) id icon;
@@ -26,7 +23,7 @@
 @end
 
 // ==========================================
-// 2. BIẾN TOÀN CỤC & LOG AN TOÀN
+// 2. BIẾN TOÀN CỤC & HÀM BỔ TRỢ
 // ==========================================
 
 static LMTransitionState *gCurrentState = nil;
@@ -34,10 +31,6 @@ static UIWindow *gOverlayWindow = nil;
 static BOOL gIsCustomAppLaunching = NO;
 
 #define LMLog(fmt, ...) NSLog(@"[LiquidMorph] " fmt, ##__VA_ARGS__)
-
-// ==========================================
-// 3. TOÁN HỌC VẼ DƯỜNG CONG (CGPATH ENGINE)
-// ==========================================
 
 static CGPathRef LMRoundedQuadPath(CGPoint tl, CGPoint tr, CGPoint br, CGPoint bl,
                                     CGFloat rTL, CGFloat rTR, CGFloat rBR, CGFloat rBL) {
@@ -110,7 +103,6 @@ static UIColor *LMSystemBackgroundColor(void) {
     return [UIColor whiteColor];
 }
 
-// LẤY HÌNH ICON AN TOÀN TRÁNH CRASH CoreAnimation
 static UIImage *LMSafeExtractIconImage(UIView *iconView) {
     if (!iconView) return nil;
     if (iconView.layer.contents) {
@@ -197,7 +189,7 @@ static NSArray *LMBuildKeyframePaths(CGRect iconFrame, CGRect screen, BOOL openi
 }
 
 // ==========================================
-// 4. QUẢN LÝ OVERLAY VÀ ANIMATION
+// 3. OVERLAY ANIMATION ENGINE
 // ==========================================
 
 static void LMForceClearOverlay(void) {
@@ -310,51 +302,35 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
 }
 
 // ==========================================
-// 5. HOOKS: ẨN ANIMATION CHUYỂN CẢNH GỐC
-// ==========================================
-
-%hook SBUIAnimationController
-- (void)_willBegin {
-    %orig;
-    if (gIsCustomAppLaunching) {
-        UIView *containerView = [self valueForKey:@"_containerView"];
-        if (containerView) {
-            containerView.alpha = 0.0;
-        }
-    }
-}
-- (void)_cleanupAnimation {
-    %orig;
-    UIView *containerView = [self valueForKey:@"_containerView"];
-    if (containerView) {
-        containerView.alpha = 1.0;
-    }
-}
-%end
-
-// ==========================================
-// 6. HOOKS: BẮT SỰ KIỆN CHẠM ICON VÀ HOME
+// 4. HOOKS: AN TOÀN TRÁNH SAFEMODE
 // ==========================================
 
 %hook SBIconView
 
 - (void)_handleTap {
     @try {
-        id icon = [self valueForKey:@"icon"];
-        NSString *className = NSStringFromClass([icon class]);
+        id icon = nil;
+        if ([self respondsToSelector:@selector(icon)]) {
+            icon = [self icon];
+        }
+        
+        if (icon) {
+            NSString *className = NSStringFromClass([icon class]);
+            BOOL isFolderLike = [className.lowercaseString containsString:@"folder"] ||
+                                 [className.lowercaseString containsString:@"library"] ||
+                                 [className.lowercaseString containsString:@"cluster"];
 
-        BOOL isFolderLike = [className.lowercaseString containsString:@"folder"] ||
-                             [className.lowercaseString containsString:@"library"] ||
-                             [className.lowercaseString containsString:@"cluster"];
-
-        if (isFolderLike) {
-            %orig;
-            return;
+            if (isFolderLike) {
+                %orig;
+                return;
+            }
         }
 
-        CGRect frameInWindow = [self.window convertRect:self.bounds fromView:self];
-        UIImage *iconImage = LMSafeExtractIconImage(self);
-        LMPlayTransition(frameInWindow, iconImage, YES);
+        if (self.window) {
+            CGRect frameInWindow = [self.window convertRect:self.bounds fromView:self];
+            UIImage *iconImage = LMSafeExtractIconImage(self);
+            LMPlayTransition(frameInWindow, iconImage, YES);
+        }
     } @catch (NSException *e) {
         LMLog(@"Exception in _handleTap: %@", e.reason);
     }
@@ -363,32 +339,12 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
 
 %end
 
-@interface SBIconController : NSObject
-- (void)handleHomeButtonTap;
-@end
-
-%hook SBIconController
-
-- (void)handleHomeButtonTap {
-    @try {
-        if (gCurrentState && gCurrentState.isOpening) {
-            CGRect iconFrame = gCurrentState.iconFrame;
-            LMPlayTransition(iconFrame, nil, NO);
-        }
-    } @catch (NSException *e) {
-        LMLog(@"Exception in handleHomeButtonTap: %@", e.reason);
-    }
-    %orig;
-}
-
-%end
-
 // ==========================================
-// 7. KHỞI TẠO TWEAK
+// 5. INITIALIZER
 // ==========================================
 
 %ctor {
     @autoreleasepool {
-        LMLog(@"LiquidMorph loaded successfully into SpringBoard.");
+        LMLog(@"LiquidMorph loaded successfully without SafeMode crash.");
     }
 }
