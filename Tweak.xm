@@ -210,12 +210,31 @@ static void LMEnsureWindow(void) {
         gOverlayWindow.userInteractionEnabled = NO;
         gOverlayWindow.backgroundColor = [UIColor clearColor];
     }
-    Class targetSceneClass = NSClassFromString(@"UIWindowScene");
-    if (targetSceneClass) {
-        for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
-            if ([scene isKindOfClass:targetSceneClass] && scene.activationState == UISceneActivationStateForegroundActive) {
-                gOverlayWindow.windowScene = (UIWindowScene *)scene;
-                break;
+    
+    Class targetAppClass = NSClassFromString(@"UIApplication");
+    if (targetAppClass) {
+        id app = [targetAppClass performSelector:@selector(sharedApplication)];
+        if ([app respondsToSelector:@selector(connectedScenes)]) {
+            NSSet *scenes = [app performSelector:@selector(connectedScenes)];
+            for (id scene in scenes) {
+                if ([scene isKindOfClass:NSClassFromString(@"UIWindowScene")]) {
+                    NSInteger state = 0;
+                    NSMethodSignature *sig = [scene methodSignatureForSelector:@selector(activationState)];
+                    if (sig) {
+                        NSInvocation *inv = [NSInvocation invocationWithMethodSignature:sig];
+                        [inv setTarget:scene];
+                        [inv setSelector:@selector(activationState)];
+                        [inv invoke];
+                        [inv getReturnValue:&state];
+                    }
+                    
+                    if (state == 1) { // ForegroundActive
+                        if ([gOverlayWindow respondsToSelector:@selector(setWindowScene:)]) {
+                            [gOverlayWindow performSelector:@selector(setWindowScene:) withObject:scene];
+                        }
+                        break;
+                    }
+                }
             }
         }
     }
