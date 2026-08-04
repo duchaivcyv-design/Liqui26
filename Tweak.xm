@@ -116,7 +116,7 @@ static UIWindow *gOverlayWindow = nil;
 static CGRect gLastOpenedIconFrame = CGRectZero;
 static BOOL gIsCustomTransitionActive = NO;
 
-// Kiểm tra xem người dùng có đang ở trong giao diện Đa nhiệm / App Switcher hay không
+// Kiểm tra xem có đang ở trong giao diện đa nhiệm / xóa tab hay không
 static BOOL LMIsInAppSwitcher(void) {
     @try {
         Class appSwitcherControllerClass = objc_getClass("SBMainSwitcherViewController");
@@ -124,7 +124,6 @@ static BOOL LMIsInAppSwitcher(void) {
             appSwitcherControllerClass = objc_getClass("SBAppSwitcherController");
         }
         if (appSwitcherControllerClass) {
-            // Kiểm tra các phương thức phổ biến để nhận biết app switcher đang hiển thị
             SEL selShared = NSSelectorFromString(@"sharedInstance");
             if ([appSwitcherControllerClass respondsToSelector:selShared]) {
                 id switcher = [appSwitcherControllerClass performSelector:selShared];
@@ -264,7 +263,7 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
     }
 
     CGRect screen = gOverlayWindow.bounds;
-    CGFloat duration = 0.65;
+    CGFloat duration = 0.65; // Chuẩn hiệu ứng 26 mượt mà và chậm rãi hơn khoảng 0.2s
 
     CALayer *backdrop = [CALayer layer];
     backdrop.frame = screen;
@@ -355,6 +354,7 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
         id icon = [self valueForKey:@"icon"];
         NSString *className = NSStringFromClass([icon class]);
 
+        // Chặn các đối tượng không phải app thông thường (Folder, Widget, Thư viện ứng dụng)
         BOOL isFolderLike = [className.lowercaseString containsString:@"folder"] ||
                              [className.lowercaseString containsString:@"library"] ||
                              [className.lowercaseString containsString:@"cluster"];
@@ -364,7 +364,26 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
             return;
         }
 
+        // Lấy thông tin ứng dụng để lọc bỏ việc kích hoạt nhầm vào các nút Quick Actions ẩn (như Chụp ảnh / Nhắn tin nhanh ngoài màn hình khóa hoặc menu giữ icon)
+        if ([icon respondsToSelector:@(sel_registerName("application"))]) {
+            id app = [icon performSelector:@selector(application)];
+            if (app && [app respondsToSelector:@(sel_registerName("bundleIdentifier"))]) {
+                NSString *bundleID = [app performSelector:@selector(bundleIdentifier)];
+                // Nếu không có bundleID hợp lệ hoặc là thành phần phụ -> bỏ qua
+                if (!bundleID || bundleID.length == 0) {
+                    %orig;
+                    return;
+                }
+            }
+        }
+
         CGRect frameInWindow = [self.window convertRect:self.bounds fromView:self];
+        // Đảm bảo khung icon hợp lệ (tránh bắt nhầm các frame ảo bằng 0 gây lỗi hiệu ứng nhảy cóc sang chụp ảnh/nhắn tin)
+        if (CGRectIsEmpty(frameInWindow) || frameInWindow.size.width < 10) {
+            %orig;
+            return;
+        }
+
         UIImage *iconImage = LMRenderIconImage(self);
         LMPlayTransition(frameInWindow, iconImage, YES);
     } @catch (NSException *e) {}
@@ -374,7 +393,7 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
 %end
 
 // ==========================================
-// XỬ LÝ ĐÓNG APP (CHẶN KHI ĐANG Ở TRONG APP SWITCHER)
+// XỬ LÝ ĐÓNG APP (AN TOÀN TUYỆT ĐỐI, KHÔNG ĐÈ XÓA TAB / ĐA NHIỆM)
 // ==========================================
 @interface SBWorkspaceApplicationSceneTransitionContext : NSObject
 @end
@@ -382,7 +401,6 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
 %hook SBWorkspaceApplicationSceneTransitionContext
 
 - (void)setAnimationDisabled:(BOOL)disabled {
-    // Nếu đang trong giao diện đa nhiệm / xóa tab -> Tuyệt đối không kích hoạt hiệu ứng đóng app đè lên
     if (LMIsInAppSwitcher()) {
         %orig(disabled);
         return;
@@ -422,5 +440,5 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
 %end
 
 %ctor {
-    LMLog("=== LiquidMorph v10.1 Switcher Safe Loaded ===");
+    LMLog("=== LiquidMorph v10.2 Final Clean Loaded ===");
 }
