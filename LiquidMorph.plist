@@ -1,0 +1,15 @@
+TARGET := iphone:clang:latest:15.0
+INSTALL_TARGET_PROCESSES = SpringBoard
+
+# Chọn rootless hoặc roothide tương ứng
+THEOS_PACKAGE_SCHEME = rootless
+
+include $(THEOS)/makefiles/common.mk
+
+TWEAK_NAME = LiquidMorph
+
+LiquidMorph_FILES = Tweak.x
+LiquidMorph_CFLAGS = -fobjc-arc
+LiquidMorph_FRAMEWORKS = UIKit QuartzCore CoreGraphics
+
+include $(THEOS_MAKEFILE_PATH)/tweak.mk
