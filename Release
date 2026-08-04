@@ -1,0 +1,8 @@
+Origin: TaoJB Repo
+Label: TaoJB
+Suite: TaoJB
+Version: 1.0.1
+Codename: ios
+Architectures: iphoneos-arm iphoneos-arm64
+Components: main
+Description: Cac thu thuat cho iPhone JB
