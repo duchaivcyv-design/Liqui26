@@ -1,13 +1,13 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Filter</key>
-    <dict>
-        <key>Bundles</key>
-        <array>
-            <string>com.apple.springboard</string>
-        </array>
-    </dict>
-</dict>
-</plis
+FINALPACKAGE = 1
+export TARGET = iphone:clang
+export ARCHS = arm64
+export ADDITIONAL_CFLAGS = -DTHEOS_LEAN_AND_MEAN -fobjc-arc
+
+include $(THEOS)/makefiles/common.mk
+
+TWEAK_NAME = LiquidMorph
+
+LiquidMorph_FILES = Tweak.xm
+LiquidMorph_FRAMEWORKS = UIKit Foundation CoreMotion QuartzCore
+
+include $(THEOS_MAKE_PATH)/tweak.mk
