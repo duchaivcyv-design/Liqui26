@@ -116,6 +116,37 @@ static UIWindow *gOverlayWindow = nil;
 static CGRect gLastOpenedIconFrame = CGRectZero;
 static BOOL gIsCustomTransitionActive = NO;
 
+// Kiểm tra xem người dùng có đang ở trong giao diện Đa nhiệm / App Switcher hay không
+static BOOL LMIsInAppSwitcher(void) {
+    @try {
+        Class appSwitcherControllerClass = objc_getClass("SBMainSwitcherViewController");
+        if (!appSwitcherControllerClass) {
+            appSwitcherControllerClass = objc_getClass("SBAppSwitcherController");
+        }
+        if (appSwitcherControllerClass) {
+            // Kiểm tra các phương thức phổ biến để nhận biết app switcher đang hiển thị
+            SEL selShared = NSSelectorFromString(@"sharedInstance");
+            if ([appSwitcherControllerClass respondsToSelector:selShared]) {
+                id switcher = [appSwitcherControllerClass performSelector:selShared];
+                if (switcher) {
+                    SEL selActive = NSSelectorFromString(@"isSwitcherVisible");
+                    if ([switcher respondsToSelector:selActive]) {
+                        NSMethodSignature *sig = [switcher methodSignatureForSelector:selActive];
+                        NSInvocation *inv = [NSInvocation invocationWithMethodSignature:sig];
+                        [inv setTarget:switcher];
+                        [inv setSelector:selActive];
+                        [inv invoke];
+                        BOOL visible = NO;
+                        [inv getReturnValue:&visible];
+                        if (visible) return YES;
+                    }
+                }
+            }
+        }
+    } @catch (NSException *e) {}
+    return NO;
+}
+
 static NSArray *LMBuildKeyframePaths(CGRect iconFrame, CGRect screen, BOOL opening) {
     CGFloat iconCenterXNorm = (iconFrame.origin.x + iconFrame.size.width / 2.0) / screen.size.width;
     CGFloat iconCenterYNorm = (iconFrame.origin.y + iconFrame.size.height / 2.0) / screen.size.height;
@@ -125,7 +156,7 @@ static NSArray *LMBuildKeyframePaths(CGRect iconFrame, CGRect screen, BOOL openi
     CGFloat closeRight = iconCenterXNorm;
     CGFloat closeLeft = 1.0 - iconCenterXNorm;
 
-    NSInteger steps = 28;
+    NSInteger steps = 32;
     NSMutableArray *paths = [NSMutableArray array];
     CGFloat maxDelay = 0.4;
     CGFloat endRadius = 20.0;
@@ -207,7 +238,7 @@ static void LMForceClearOverlay(void) {
 static void LMEnsureWindow(void) {
     if (gOverlayWindow) return;
     gOverlayWindow = [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
-    gOverlayWindow.windowLevel = UIWindowLevelStatusBar + 3000; // Đặt trên cùng để đè mọi layer gốc
+    gOverlayWindow.windowLevel = UIWindowLevelStatusBar + 3000;
     gOverlayWindow.userInteractionEnabled = NO;
     gOverlayWindow.backgroundColor = [UIColor clearColor];
     if (@available(iOS 13.0, *)) {
@@ -222,6 +253,8 @@ static void LMEnsureWindow(void) {
 }
 
 static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening) {
+    if (gIsCustomTransitionActive) return;
+
     LMForceClearOverlay();
     LMEnsureWindow();
 
@@ -231,7 +264,7 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
     }
 
     CGRect screen = gOverlayWindow.bounds;
-    CGFloat duration = 0.45;
+    CGFloat duration = 0.65;
 
     CALayer *backdrop = [CALayer layer];
     backdrop.frame = screen;
@@ -295,10 +328,7 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
     state.isOpening = opening;
     gCurrentState = state;
 
-    LMLog(@"Transition %@ played | frame: %@ | iconImage: %@",
-          opening ? @"OPEN" : @"CLOSE", NSStringFromCGRect(iconFrame), iconImage ? @"yes" : @"nil");
-
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)((duration + 0.02) * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)((duration + 0.05) * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         if (gCurrentState == state) {
             [backdrop removeFromSuperlayer];
             [iconLayer removeFromSuperlayer];
@@ -317,6 +347,11 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
 
 - (void)_handleTap {
     @try {
+        if (gIsCustomTransitionActive || LMIsInAppSwitcher()) {
+            %orig;
+            return;
+        }
+
         id icon = [self valueForKey:@"icon"];
         NSString *className = NSStringFromClass([icon class]);
 
@@ -325,60 +360,21 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
                              [className.lowercaseString containsString:@"cluster"];
 
         if (isFolderLike) {
-            LMLog(@"_handleTap fired NHUNG la folder/library (class: %@) - bo qua hieu ung", className);
             %orig;
             return;
         }
 
         CGRect frameInWindow = [self.window convertRect:self.bounds fromView:self];
         UIImage *iconImage = LMRenderIconImage(self);
-        LMLog(@"_handleTap fired | class: %@ | frame: %@", className, NSStringFromCGRect(frameInWindow));
         LMPlayTransition(frameInWindow, iconImage, YES);
-    } @catch (NSException *e) {
-        LMLog(@"Exception in _handleTap: %@", e.reason);
-    }
-    %orig;
-}
-
-%end
-
-// ==========================================
-// ẨN HOÀN TOÀN HIỆU ỨNG GỐC CỦA SPRINGBOARD
-// ==========================================
-@interface SBUIAnimationController : NSObject
-- (UIView *)containerView;
-@end
-
-%hook SBUIAnimationController
-
-- (void)_willBegin {
-    %orig;
-    if (gIsCustomTransitionActive) {
-        @try {
-            UIView *container = [self containerView];
-            if (container) {
-                container.hidden = YES; // Ẩn hiệu ứng phóng to/thu nhỏ mặc định của hệ thống
-                container.alpha = 0.0;
-            }
-        } @catch (NSException *e) {}
-    }
-}
-
-- (void)_cleanupAnimation {
-    %orig;
-    @try {
-        UIView *container = [self containerView];
-        if (container) {
-            container.hidden = NO;
-            container.alpha = 1.0;
-        }
     } @catch (NSException *e) {}
+    %orig;
 }
 
 %end
 
 // ==========================================
-// XỬ LÝ ĐÓNG APP KHI VUỐT THANH HOME HOẶC THOÁT
+// XỬ LÝ ĐÓNG APP (CHẶN KHI ĐANG Ở TRONG APP SWITCHER)
 // ==========================================
 @interface SBWorkspaceApplicationSceneTransitionContext : NSObject
 @end
@@ -386,8 +382,13 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
 %hook SBWorkspaceApplicationSceneTransitionContext
 
 - (void)setAnimationDisabled:(BOOL)disabled {
-    if (gLastOpenedIconFrame.size.width > 0 && !gIsCustomTransitionActive && gCurrentState == nil) {
-        LMLog(@"Triggering close app transition via scene context/gesture");
+    // Nếu đang trong giao diện đa nhiệm / xóa tab -> Tuyệt đối không kích hoạt hiệu ứng đóng app đè lên
+    if (LMIsInAppSwitcher()) {
+        %orig(disabled);
+        return;
+    }
+
+    if (!gIsCustomTransitionActive && gLastOpenedIconFrame.size.width > 0 && gCurrentState == nil) {
         LMPlayTransition(gLastOpenedIconFrame, nil, NO);
     }
     %orig(disabled);
@@ -403,24 +404,23 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
 
 - (void)handleHomeButtonTap {
     @try {
-        LMLog(@"handleHomeButtonTap fired | hasActiveState: %d | isOpening: %d",
-              gCurrentState != nil, gCurrentState.isOpening);
+        if (gIsCustomTransitionActive || LMIsInAppSwitcher()) {
+            %orig;
+            return;
+        }
+
         if (gCurrentState && gCurrentState.isOpening) {
             CGRect iconFrame = gCurrentState.iconFrame;
             LMPlayTransition(iconFrame, nil, NO);
-        } else if (gLastOpenedIconFrame.size.width > 0 && !gIsCustomTransitionActive) {
+        } else if (gLastOpenedIconFrame.size.width > 0) {
             LMPlayTransition(gLastOpenedIconFrame, nil, NO);
         }
-    } @catch (NSException *e) {
-        LMLog(@"Exception in handleHomeButtonTap: %@", e.reason);
-    }
+    } @catch (NSException *e) {}
     %orig;
 }
 
 %end
 
 %ctor {
-    LMLog(@"=== LiquidMorph REAL v10 Full + Hide Native Loaded | process: %@ | iOS %@ ===",
-          [[NSProcessInfo processInfo] processName],
-          [[UIDevice currentDevice] systemVersion]);
+    LMLog("=== LiquidMorph v10.1 Switcher Safe Loaded ===");
 }
