@@ -3,8 +3,19 @@
 #import <objc/runtime.h>
 
 // ==========================================
-// 1. DỮ LIỆU CẤU TRÚC VÀ TRẠNG THÁI TOÀN CỤC
+// 1. KHOA BÁO INTERFACE (SỬA LỖI FORWARD CLASS)
 // ==========================================
+
+@interface SBUIAnimationController : NSObject
+@end
+
+@interface SBIconView : UIView
+@property (nonatomic, strong) id icon;
+- (void)_handleTap;
+@end
+
+@interface NCNotificationShortLookView : UIView
+@end
 
 @interface LMTransitionState : NSObject
 @property (nonatomic, strong) CAShapeLayer *maskShape;
@@ -16,12 +27,16 @@
 @implementation LMTransitionState
 @end
 
+// ==========================================
+// 2. BIẾN TOÀN CỤC
+// ==========================================
+
 static LMTransitionState *gCurrentState = nil;
 static UIWindow *gOverlayWindow = nil;
 static BOOL gIsCustomAppLaunching = NO;
 
 // ==========================================
-// 2. TỐI ƯU VẼ DƯỜNG CONG (CGPATH ENGINE)
+// 3. TỐI ƯU VẼ DƯỜNG CONG (CGPATH ENGINE)
 // ==========================================
 
 static CGPathRef LMRoundedQuadPath(CGPoint tl, CGPoint tr, CGPoint br, CGPoint bl,
@@ -152,7 +167,7 @@ static NSArray *LMBuildKeyframePaths(CGRect iconFrame, CGRect screen, BOOL openi
 }
 
 // ==========================================
-// 3. QUẢN LÝ QUÁ TRÌNH CHUYỂN CẢNH
+// 4. QUẢN LÝ OVERLAY VÀ CHUYỂN CẢNH
 // ==========================================
 
 static void LMForceClearOverlay(void) {
@@ -174,10 +189,12 @@ static void LMEnsureWindow(void) {
         gOverlayWindow.backgroundColor = [UIColor clearColor];
     }
     
-    for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
-        if (scene.activationState == UISceneActivationStateForegroundActive && [scene isKindOfClass:[UIWindowScene class]]) {
-            gOverlayWindow.windowScene = (UIWindowScene *)scene;
-            break;
+    if (@available(iOS 13.0, *)) {
+        for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
+            if (scene.activationState == UISceneActivationStateForegroundActive && [scene isKindOfClass:[UIWindowScene class]]) {
+                gOverlayWindow.windowScene = (UIWindowScene *)scene;
+                break;
+            }
         }
     }
     gOverlayWindow.hidden = NO;
@@ -238,7 +255,7 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
 }
 
 // ==========================================
-// 4. HOOKS: ẨN ANIMATION MỞ APP GỐC
+// 5. HOOKS: ẨN ANIMATION MỞ APP GỐC
 // ==========================================
 
 %hook SBUIAnimationController
@@ -286,7 +303,7 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
 %end
 
 // ==========================================
-// 5. HOOKS: ẨN THÔNG BÁO GỐC & TẠO HIỆU ỨNG iOS 26
+// 6. HOOKS: ẨN THÔNG BÁO GỐC & TẠO HIỆU ỨNG iOS 26
 // ==========================================
 
 %hook NCNotificationShortLookView
