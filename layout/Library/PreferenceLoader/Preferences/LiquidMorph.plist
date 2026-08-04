@@ -1,0 +1,18 @@
+{
+    entry = {
+        label = "LiquidMorph";
+        icon = "icon.png";
+        cell = PSLinkCell;
+    };
+    items = (
+        { cell = PSGroupCell; label = "LiquidMorph"; footerText = "Chinh sua hieu ung morph khi mo/dong ung dung."; },
+        { cell = PSSwitchCell; label = "Bat hieu ung"; key = "enabled"; default = 1; PostNotification = "com.furina.liquidmorph/settingschanged"; },
+        { cell = PSGroupCell; label = "Do nay (Bounce)"; },
+        { cell = PSSliderCell; label = "Do nay"; key = "bounceAmount"; default = 42; min = 0; max = 100; PostNotification = "com.furina.liquidmorph/settingschanged"; },
+        { cell = PSGroupCell; label = "Bo goc"; },
+        { cell = PSSliderCell; label = "Bo goc cao nhat"; key = "peakRadius"; default = 120; min = 20; max = 200; PostNotification = "com.furina.liquidmorph/settingschanged"; },
+        { cell = PSSliderCell; label = "Bo goc luc ket thuc"; key = "endRadius"; default = 20; min = 0; max = 60; PostNotification = "com.furina.liquidmorph/settingschanged"; },
+        { cell = PSGroupCell; label = "Toc do"; },
+        { cell = PSSliderCell; label = "Thoi luong (giay)"; key = "duration"; default = 0.45; min = 0.15; max = 1.0; PostNotification = "com.furina.liquidmorph/settingschanged"; }
+    );
+}
