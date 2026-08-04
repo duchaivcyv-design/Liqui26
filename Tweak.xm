@@ -68,13 +68,13 @@ static CGFloat LMEdgeProgress(CGFloat t, CGFloat closeness, CGFloat maxDelay) {
 
 static CGFloat LMHumpRadius(CGFloat t) {
     CGFloat iconRadius = 13.0;
-    CGFloat peakRadius = 120.0;
-    CGFloat endRadius = 20.0;
-    if (t < 0.45) {
-        CGFloat local = t / 0.45;
+    CGFloat peakRadius = 45.0;
+    CGFloat endRadius = 0.0;
+    if (t < 0.5) {
+        CGFloat local = t / 0.5;
         return iconRadius + (peakRadius - iconRadius) * local;
     } else {
-        CGFloat local = (t - 0.45) / 0.55;
+        CGFloat local = (t - 0.5) / 0.5;
         if (local > 1) local = 1;
         return peakRadius + (endRadius - peakRadius) * local;
     }
@@ -110,7 +110,7 @@ static void LMForceClearOverlay(void) {
 static void LMEnsureWindow(void) {
     if (gOverlayWindow) return;
     gOverlayWindow = [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
-    gOverlayWindow.windowLevel = UIWindowLevelStatusBar + 9999;
+    gOverlayWindow.windowLevel = UIWindowLevelStatusBar + 99999;
     gOverlayWindow.userInteractionEnabled = NO;
     gOverlayWindow.backgroundColor = [UIColor clearColor];
     if (@available(iOS 13.0, *)) {
@@ -133,15 +133,12 @@ static NSArray *LMBuildKeyframePaths(CGRect iconFrame, CGRect screen, BOOL openi
     CGFloat closeRight = iconCenterXNorm;
     CGFloat closeLeft = 1.0 - iconCenterXNorm;
 
-    NSInteger steps = 32;
+    NSInteger steps = 40;
     NSMutableArray *paths = [NSMutableArray array];
-    CGFloat maxDelay = 0.4;
-    CGFloat endRadius = 20.0;
+    CGFloat maxDelay = 0.15;
+    CGFloat endRadius = 0.0;
     CGFloat iconRadius = 13.0;
-    CGFloat growStart = 0.15;
-
-    CGFloat bounceDirection = (iconCenterYNorm > 0.5) ? -1.0 : 1.0;
-    CGFloat bounceAmount = 42.0;
+    CGFloat growStart = 0.0;
 
     CGFloat iconLeft = iconFrame.origin.x;
     CGFloat iconRight = iconFrame.origin.x + iconFrame.size.width;
@@ -171,10 +168,8 @@ static NSArray *LMBuildKeyframePaths(CGRect iconFrame, CGRect screen, BOOL openi
             CGFloat leftP = LMEdgeProgress(t2, closeLeft, maxDelay);
             CGFloat rightP = LMEdgeProgress(t2, closeRight, maxDelay);
 
-            CGFloat bounceEnvelope = sinf(MIN(t2, 1.0) * M_PI) * bounceAmount * bounceDirection;
-
-            CGFloat topY = iconTop + (screenTop - iconTop) * topP + bounceEnvelope * (1.0 - topP);
-            CGFloat bottomY = iconBottom + (screenBottom - iconBottom) * bottomP + bounceEnvelope * (1.0 - bottomP);
+            CGFloat topY = iconTop + (screenTop - iconTop) * topP;
+            CGFloat bottomY = iconBottom + (screenBottom - iconBottom) * bottomP;
 
             CGFloat topLeftX = iconLeft + (screenLeft - iconLeft) * ((topP + leftP) * 0.5);
             CGFloat topRightX = iconRight + (screenRight - iconRight) * ((topP + rightP) * 0.5);
@@ -214,7 +209,7 @@ static void LMRunTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening, 
     }
 
     CGRect screen = gOverlayWindow.bounds;
-    CGFloat duration = 0.52;
+    CGFloat duration = 0.35;
 
     CALayer *backdrop = [CALayer layer];
     backdrop.frame = screen;
@@ -232,7 +227,7 @@ static void LMRunTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening, 
     if (targetImg) {
         iconLayer.contents = (__bridge id)targetImg.CGImage;
     } else {
-        iconLayer.backgroundColor = [UIColor colorWithWhite:0.90 alpha:1.0].CGColor;
+        iconLayer.backgroundColor = [UIColor clearColor].CGColor;
     }
     iconLayer.mask = maskShape;
     [gOverlayWindow.layer addSublayer:iconLayer];
@@ -282,12 +277,9 @@ static void LMRunTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening, 
         if (!CGRectIsEmpty(frameInWindow) && frameInWindow.size.width >= 10) {
             UIImage *iconImage = LMRenderIconImage(self);
 
-            LMRunTransition(frameInWindow, iconImage, YES, ^{
-            });
+            LMRunTransition(frameInWindow, iconImage, YES, ^{});
 
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.04 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-                %orig;
-            });
+            %orig;
             return;
         }
     } @catch (NSException *e) {}
@@ -296,12 +288,13 @@ static void LMRunTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening, 
 
 %end
 
+// Hook bắt toàn bộ sự kiện vuốt đóng app (gesture dismiss / deactivating / back to homescreen) của hệ thống
 %hook SBMainWorkspace
 
 - (void)executeTransitionRequest:(id)request withCompletion:(id)completion {
     @try {
         NSString *reqDesc = [request description];
-        if ([reqDesc containsString:@"Deactivating"] || [reqDesc containsString:@"dismiss"] || [reqDesc containsString:@"to-homescreen"]) {
+        if ([reqDesc containsString:@"Deactivating"] || [reqDesc containsString:@"dismiss"] || [reqDesc containsString:@"to-homescreen"] || [reqDesc containsString:@"home"] || [reqDesc containsString:@"unlocked"]) {
             if (!gIsTransitionRunning && !CGRectIsEmpty(gLastOpenedIconFrame)) {
                 LMRunTransition(gLastOpenedIconFrame, gLastOpenedIconImage, NO, nil);
             }
@@ -313,5 +306,5 @@ static void LMRunTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening, 
 %end
 
 %ctor {
-    LMLog(@"=== LiquidMorph v12.1 Pure ASCII Loaded ===");
+    LMLog(@"=== LiquidMorph v12.6 Full Gesture Fixed Loaded ===");
 }
