@@ -3,7 +3,7 @@
 #import <objc/runtime.h>
 
 // ==========================================
-// 1. KHOA BÁO INTERFACE (SỬA LỖI FORWARD CLASS)
+// 1. KHAI BÁO INTERFACE (SỬA LỖI FORWARD CLASS)
 // ==========================================
 
 @interface SBUIAnimationController : NSObject
@@ -303,7 +303,7 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
 %end
 
 // ==========================================
-// 6. HOOKS: ẨN THÔNG BÁO GỐC & TẠO HIỆU ỨNG iOS 26
+// 6. HOOKS: THÔNG BÁO TÙY CHỈNH
 // ==========================================
 
 %hook NCNotificationShortLookView
@@ -343,8 +343,13 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
 
 %end
 
+// ==========================================
+// 7. CHẠY THẲNG VÀO HỆ THỐNG KHI TẢI
+// ==========================================
+
 %ctor {
     @autoreleasepool {
+        NSLog(@"[LiquidMorph] Direct injection into SpringBoard active.");
         LMForceClearOverlay();
     }
 }
