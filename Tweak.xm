@@ -14,7 +14,6 @@
 @property (nonatomic, strong) CALayer *backdrop;
 @property (nonatomic, strong) CAShapeLayer *maskShape;
 @property (nonatomic, strong) CALayer *iconLayer;
-@property (nonatomic, strong) CALayer *colorLayer;
 @property (nonatomic, assign) CGRect iconFrame;
 @property (nonatomic, assign) BOOL isOpening;
 @end
@@ -23,7 +22,7 @@
 @end
 
 // ==========================================
-// 2. BIẾN TOÀN CỤC & HÀM BỔ TRỢ
+// 2. BIẾN TOÀN CỤC
 // ==========================================
 
 static LMTransitionState *gCurrentState = nil;
@@ -31,6 +30,10 @@ static UIWindow *gOverlayWindow = nil;
 static BOOL gIsCustomAppLaunching = NO;
 
 #define LMLog(fmt, ...) NSLog(@"[LiquidMorph] " fmt, ##__VA_ARGS__)
+
+// ==========================================
+// 3. TOÁN HỌC VẼ ĐƯỜNG CONG TỐI ƯU (LIGHTWEIGHT)
+// ==========================================
 
 static CGPathRef LMRoundedQuadPath(CGPoint tl, CGPoint tr, CGPoint br, CGPoint bl,
                                     CGFloat rTL, CGFloat rTR, CGFloat rBR, CGFloat rBL) {
@@ -83,24 +86,16 @@ static CGFloat LMEdgeProgress(CGFloat t, CGFloat closeness, CGFloat maxDelay) {
 }
 
 static CGFloat LMHumpRadius(CGFloat t) {
-    CGFloat iconRadius = 13.0;
-    CGFloat peakRadius = 120.0;
-    CGFloat endRadius = 20.0;
-    if (t < 0.45) {
-        CGFloat local = t / 0.45;
+    CGFloat iconRadius = 14.0;
+    CGFloat peakRadius = 85.0;
+    CGFloat endRadius = 0.0;
+    if (t < 0.5) {
+        CGFloat local = t / 0.5;
         return iconRadius + (peakRadius - iconRadius) * local;
     } else {
-        CGFloat local = (t - 0.45) / 0.55;
-        if (local > 1) local = 1;
+        CGFloat local = (t - 0.5) / 0.5;
         return peakRadius + (endRadius - peakRadius) * local;
     }
-}
-
-static UIColor *LMSystemBackgroundColor(void) {
-    if (@available(iOS 13.0, *)) {
-        return [UIColor systemBackgroundColor];
-    }
-    return [UIColor whiteColor];
 }
 
 static UIImage *LMSafeExtractIconImage(UIView *iconView) {
@@ -120,15 +115,12 @@ static NSArray *LMBuildKeyframePaths(CGRect iconFrame, CGRect screen, BOOL openi
     CGFloat closeRight = iconCenterXNorm;
     CGFloat closeLeft = 1.0 - iconCenterXNorm;
 
-    NSInteger steps = 28;
-    NSMutableArray *paths = [NSMutableArray array];
-    CGFloat maxDelay = 0.4;
-    CGFloat endRadius = 20.0;
-    CGFloat iconRadius = 13.0;
-    CGFloat growStart = 0.15;
-
-    CGFloat bounceDirection = (iconCenterYNorm > 0.5) ? -1.0 : 1.0;
-    CGFloat bounceAmount = 42.0;
+    // Giảm xuống 14 bước để tối ưu CPU/GPU mượt mà
+    NSInteger steps = 14;
+    NSMutableArray *paths = [NSMutableArray arrayWithCapacity:steps + 1];
+    CGFloat maxDelay = 0.25;
+    CGFloat iconRadius = 14.0;
+    CGFloat growStart = 0.08;
 
     CGFloat iconLeft = iconFrame.origin.x;
     CGFloat iconRight = iconFrame.origin.x + iconFrame.size.width;
@@ -142,7 +134,6 @@ static NSArray *LMBuildKeyframePaths(CGRect iconFrame, CGRect screen, BOOL openi
     for (NSInteger i = 0; i <= steps; i++) {
         CGFloat tRaw = (CGFloat)i / (CGFloat)steps;
         CGFloat t = opening ? tRaw : (1.0 - tRaw);
-
         CGPathRef p;
 
         if (t < growStart) {
@@ -158,11 +149,8 @@ static NSArray *LMBuildKeyframePaths(CGRect iconFrame, CGRect screen, BOOL openi
             CGFloat leftP = LMEdgeProgress(t2, closeLeft, maxDelay);
             CGFloat rightP = LMEdgeProgress(t2, closeRight, maxDelay);
 
-            CGFloat bounceEnvelope = sinf(MIN(t2, 1.0) * M_PI) * bounceAmount * bounceDirection;
-
-            CGFloat topY = iconTop + (screenTop - iconTop) * topP + bounceEnvelope * (1.0 - topP);
-            CGFloat bottomY = iconBottom + (screenBottom - iconBottom) * bottomP + bounceEnvelope * (1.0 - bottomP);
-
+            CGFloat topY = iconTop + (screenTop - iconTop) * topP;
+            CGFloat bottomY = iconBottom + (screenBottom - iconBottom) * bottomP;
             CGFloat topLeftX = iconLeft + (screenLeft - iconLeft) * ((topP + leftP) * 0.5);
             CGFloat topRightX = iconRight + (screenRight - iconRight) * ((topP + rightP) * 0.5);
             CGFloat bottomLeftX = iconLeft + (screenLeft - iconLeft) * ((bottomP + leftP) * 0.5);
@@ -175,10 +163,10 @@ static NSArray *LMBuildKeyframePaths(CGRect iconFrame, CGRect screen, BOOL openi
 
             CGFloat humpBase = LMHumpRadius(t2);
 
-            CGFloat rTL = humpBase * (1.0 - MIN(topP, leftP)) + endRadius * MIN(topP, leftP);
-            CGFloat rTR = humpBase * (1.0 - MIN(topP, rightP)) + endRadius * MIN(topP, rightP);
-            CGFloat rBR = humpBase * (1.0 - MIN(bottomP, rightP)) + endRadius * MIN(bottomP, rightP);
-            CGFloat rBL = humpBase * (1.0 - MIN(bottomP, leftP)) + endRadius * MIN(bottomP, leftP);
+            CGFloat rTL = humpBase * (1.0 - MIN(topP, leftP));
+            CGFloat rTR = humpBase * (1.0 - MIN(topP, rightP));
+            CGFloat rBR = humpBase * (1.0 - MIN(bottomP, rightP));
+            CGFloat rBL = humpBase * (1.0 - MIN(bottomP, leftP));
 
             p = LMRoundedQuadPath(tl, tr, br, bl, rTL, rTR, rBR, rBL);
         }
@@ -189,11 +177,12 @@ static NSArray *LMBuildKeyframePaths(CGRect iconFrame, CGRect screen, BOOL openi
 }
 
 // ==========================================
-// 3. OVERLAY ANIMATION ENGINE
+// 4. OVERLAY ANIMATION ENGINE (MƯỢT MÀ)
 // ==========================================
 
 static void LMForceClearOverlay(void) {
     if (gOverlayWindow) {
+        gOverlayWindow.hidden = YES;
         NSArray *sublayers = [gOverlayWindow.layer.sublayers copy];
         for (CALayer *l in sublayers) {
             [l removeFromSuperlayer];
@@ -204,14 +193,16 @@ static void LMForceClearOverlay(void) {
 }
 
 static void LMEnsureWindow(void) {
-    if (gOverlayWindow) return;
-    gOverlayWindow = [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
-    gOverlayWindow.windowLevel = UIWindowLevelStatusBar + 1000;
-    gOverlayWindow.userInteractionEnabled = NO;
-    gOverlayWindow.backgroundColor = [UIColor clearColor];
+    if (!gOverlayWindow) {
+        gOverlayWindow = [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
+        gOverlayWindow.windowLevel = UIWindowLevelStatusBar + 1000;
+        gOverlayWindow.userInteractionEnabled = NO;
+        gOverlayWindow.backgroundColor = [UIColor clearColor];
+    }
+    
     if (@available(iOS 13.0, *)) {
         for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
-            if ([scene isKindOfClass:[UIWindowScene class]]) {
+            if ([scene isKindOfClass:[UIWindowScene class]] && scene.activationState == UISceneActivationStateForegroundActive) {
                 gOverlayWindow.windowScene = (UIWindowScene *)scene;
                 break;
             }
@@ -226,12 +217,9 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
 
     gIsCustomAppLaunching = YES;
     CGRect screen = gOverlayWindow.bounds;
-    CGFloat duration = 0.45;
-
-    CALayer *backdrop = [CALayer layer];
-    backdrop.frame = screen;
-    backdrop.backgroundColor = LMSystemBackgroundColor().CGColor;
-    [gOverlayWindow.layer addSublayer:backdrop];
+    
+    // Tăng thời gian lên 0.68 giây cho cảm giác chuyển cảnh chậm rãi, mượt mà như iOS 26
+    CGFloat duration = 0.68;
 
     CAShapeLayer *maskShape = [CAShapeLayer layer];
     maskShape.frame = screen;
@@ -242,68 +230,73 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
     if (iconImage) {
         iconLayer.contents = (__bridge id)iconImage.CGImage;
     } else {
-        iconLayer.backgroundColor = [UIColor colorWithWhite:0.85 alpha:1.0].CGColor;
+        iconLayer.backgroundColor = [UIColor colorWithRed:0.1 green:0.6 blue:1.0 alpha:1.0].CGColor;
     }
     iconLayer.mask = maskShape;
     [gOverlayWindow.layer addSublayer:iconLayer];
-
-    CAShapeLayer *maskShape2 = [CAShapeLayer layer];
-    maskShape2.frame = screen;
-    CALayer *colorLayer = [CALayer layer];
-    colorLayer.frame = screen;
-    colorLayer.backgroundColor = LMSystemBackgroundColor().CGColor;
-    colorLayer.opacity = 0.0;
-    colorLayer.mask = maskShape2;
-    [gOverlayWindow.layer addSublayer:colorLayer];
 
     NSArray *paths = LMBuildKeyframePaths(iconFrame, screen, opening);
 
     CAKeyframeAnimation *pathAnim = [CAKeyframeAnimation animationWithKeyPath:@"path"];
     pathAnim.values = paths;
     pathAnim.duration = duration;
-    pathAnim.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseInEaseOut];
+    // Sử dụng đường cong lực đàn hồi cho hiệu ứng phồng mượt
+    pathAnim.timingFunction = [CAMediaTimingFunction functionWithControlPoints:0.22 :1.0 :0.36 :1.0];
     pathAnim.fillMode = kCAFillModeForwards;
     pathAnim.removedOnCompletion = NO;
 
     maskShape.path = (__bridge CGPathRef)paths.lastObject;
     [maskShape addAnimation:pathAnim forKey:@"morph"];
 
-    maskShape2.path = (__bridge CGPathRef)paths.lastObject;
-    [maskShape2 addAnimation:pathAnim forKey:@"morph"];
-
-    CAKeyframeAnimation *fadeAnim = [CAKeyframeAnimation animationWithKeyPath:@"opacity"];
-    fadeAnim.values = @[@0.0, @0.0, @1.0, @1.0];
-    fadeAnim.keyTimes = @[@0.0, @0.55, @0.66, @1.0];
-    fadeAnim.duration = duration;
-    fadeAnim.fillMode = kCAFillModeForwards;
-    fadeAnim.removedOnCompletion = NO;
-
-    colorLayer.opacity = 1.0;
-    [colorLayer addAnimation:fadeAnim forKey:@"fade"];
-
     LMTransitionState *state = [LMTransitionState new];
-    state.backdrop = backdrop;
     state.maskShape = maskShape;
     state.iconLayer = iconLayer;
-    state.colorLayer = colorLayer;
     state.iconFrame = iconFrame;
     state.isOpening = opening;
     gCurrentState = state;
 
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)((duration + 0.02) * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(duration * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         if (gCurrentState == state) {
-            [backdrop removeFromSuperlayer];
-            [iconLayer removeFromSuperlayer];
-            [colorLayer removeFromSuperlayer];
-            gCurrentState = nil;
-            gIsCustomAppLaunching = NO;
+            LMForceClearOverlay();
         }
     });
 }
 
 // ==========================================
-// 4. HOOKS: AN TOÀN TRÁNH SAFEMODE
+// 5. HOOKS: ẨN ANIMATION MỞ APP GỐC VÀ DỰ DÒNG AN TOÀN
 // ==========================================
+
+%hook SBUIAnimationController
+
+- (void)_willBegin {
+    %orig;
+    if (gIsCustomAppLaunching) {
+        @try {
+            Ivar containerIvar = class_getInstanceVariable([self class], "_containerView");
+            if (containerIvar) {
+                UIView *containerView = object_getIvar(self, containerIvar);
+                if ([containerView isKindOfClass:[UIView class]]) {
+                    containerView.alpha = 0.0;
+                }
+            }
+        } @catch (NSException *e) {}
+    }
+}
+
+- (void)_cleanupAnimation {
+    %orig;
+    @try {
+        Ivar containerIvar = class_getInstanceVariable([self class], "_containerView");
+        if (containerIvar) {
+            UIView *containerView = object_getIvar(self, containerIvar);
+            if ([containerView isKindOfClass:[UIView class]]) {
+                containerView.alpha = 1.0;
+            }
+        }
+    } @catch (NSException *e) {}
+}
+
+%end
 
 %hook SBIconView
 
@@ -340,11 +333,11 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
 %end
 
 // ==========================================
-// 5. INITIALIZER
+// 6. INITIALIZER
 // ==========================================
 
 %ctor {
     @autoreleasepool {
-        LMLog(@"LiquidMorph loaded successfully without SafeMode crash.");
+        LMLog(@"LiquidMorph loaded: Smooth animation mode enabled.");
     }
 }
