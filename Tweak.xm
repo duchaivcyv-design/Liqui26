@@ -207,7 +207,7 @@ static void LMForceClearOverlay(void) {
 static void LMEnsureWindow(void) {
     if (gOverlayWindow) return;
     gOverlayWindow = [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
-    gOverlayWindow.windowLevel = UIWindowLevelStatusBar + 1000;
+    gOverlayWindow.windowLevel = UIWindowLevelStatusBar + 3000; // Đặt trên cùng để đè mọi layer gốc
     gOverlayWindow.userInteractionEnabled = NO;
     gOverlayWindow.backgroundColor = [UIColor clearColor];
     if (@available(iOS 13.0, *)) {
@@ -226,7 +226,9 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
     LMEnsureWindow();
 
     gIsCustomTransitionActive = YES;
-    gLastOpenedIconFrame = iconFrame;
+    if (opening) {
+        gLastOpenedIconFrame = iconFrame;
+    }
 
     CGRect screen = gOverlayWindow.bounds;
     CGFloat duration = 0.45;
@@ -341,7 +343,7 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
 %end
 
 // ==========================================
-// BỔ SUNG: ẨN HIỆU ỨNG GỐC CỦA SPRINGBOARD
+// ẨN HOÀN TOÀN HIỆU ỨNG GỐC CỦA SPRINGBOARD
 // ==========================================
 @interface SBUIAnimationController : NSObject
 - (UIView *)containerView;
@@ -355,7 +357,8 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
         @try {
             UIView *container = [self containerView];
             if (container) {
-                container.hidden = YES; // Ẩn hoàn toàn khung animation gốc để tránh bị đè/lộ hình
+                container.hidden = YES; // Ẩn hiệu ứng phóng to/thu nhỏ mặc định của hệ thống
+                container.alpha = 0.0;
             }
         } @catch (NSException *e) {}
     }
@@ -367,6 +370,7 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
         UIView *container = [self containerView];
         if (container) {
             container.hidden = NO;
+            container.alpha = 1.0;
         }
     } @catch (NSException *e) {}
 }
@@ -374,7 +378,7 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
 %end
 
 // ==========================================
-// BỔ SUNG: XỬ LÝ VUỐT THOÁT APP (ĐÓNG APP)
+// XỬ LÝ ĐÓNG APP KHI VUỐT THANH HOME HOẶC THOÁT
 // ==========================================
 @interface SBWorkspaceApplicationSceneTransitionContext : NSObject
 @end
@@ -382,9 +386,8 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
 %hook SBWorkspaceApplicationSceneTransitionContext
 
 - (void)setAnimationDisabled:(BOOL)disabled {
-    // Khi hệ thống thực hiện chuyển cảnh đóng app và có lưu frame icon trước đó
     if (gLastOpenedIconFrame.size.width > 0 && !gIsCustomTransitionActive && gCurrentState == nil) {
-        LMLog("Triggering close app transition via scene context/gesture");
+        LMLog(@"Triggering close app transition via scene context/gesture");
         LMPlayTransition(gLastOpenedIconFrame, nil, NO);
     }
     %orig(disabled);
