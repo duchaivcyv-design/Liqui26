@@ -37,7 +37,14 @@ jobs:
         run: |
           mkdir -p public/debs
           
-          find . -maxdepth 2 -name "*.deb" ! -path "./public/*" -exec cp {} public/debs/ \;
+          # Quét và tìm mọi file .deb được sinh ra rồi copy vào thư mục public/debs
+          find . -name "*.deb" ! -path "./public/*" -exec cp -v {} public/debs/ \;
+          
+          # Kiểm tra nếu không có file .deb thì báo lỗi dừng workflow
+          if [ -z "$(ls -A public/debs)" ]; then
+             echo "Error: Không tìm thấy file .deb nào sau khi build!"
+             exit 1
+          fi
           
           cd public
           dpkg-scanpackages -m debs /dev/null > Packages
