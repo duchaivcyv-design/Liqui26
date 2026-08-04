@@ -1,0 +1,9 @@
+Package: Liquid Morph 
+Name: Liquid Morph2
+Version: 1.1
+Architecture: iphoneos-arm64
+Maintainer: TaoJB
+Filename: ./com.furina.liquidmorph_0.1_iphoneos-arm64.deb
+Section: Tweaks
+Size: 14242
+Description: Animation IOS 26 Demo2
