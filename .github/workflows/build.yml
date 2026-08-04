@@ -19,20 +19,12 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential fakeroot rsync curl git perl dpkg-dev bzip2 zstd unzip xz-utils sudo
 
-      - name: Install Theos & Toolchain via Official Script
+      - name: Install Theos via Official Script
         env:
           THEOS: ${{ github.workspace }}/theos
         run: |
-          # Sử dụng script cài đặt chính thức từ Theos để tự động lo toolchain và cấu hình
           export THEOS="$THEOS"
           bash -c "$(curl -fsSL https://raw.githubusercontent.com/theos/theos/master/bin/install-theos)"
-          
-          # Tải SDK chuẩn để biên dịch tweak
-          mkdir -p "$THEOS/sdks"
-          curl -sSL https://github.com/theos/sdks/archive/master.zip -o sdks.zip
-          unzip -q sdks.zip
-          mv sdks-master/*.sdk "$THEOS/sdks/"
-          rm -rf sdks.zip sdks-master
 
       - name: Build package
         env:
