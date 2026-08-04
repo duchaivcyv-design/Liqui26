@@ -1,0 +1,10 @@
+Package: com.furina.liquidmorph
+Name: LiquidMorph
+Version: 0.1
+Architecture: iphoneos-arm64
+Description: Test tweak - log icon tap
+Maintainer: Furina
+Author: Furina
+Section: Tweaks
+Depends: mobilesubstrate
+Suggests: PreferenceLoader
