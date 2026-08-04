@@ -1,6 +1,6 @@
 #import <UIKit/UIKit.h>
-#import <QuartzCore/QuartzCore.h>
 #import <objc/runtime.h>
+#import <QuartzCore/QuartzCore.h>
 
 // ==========================================
 // 1. KHAI BÁO INTERFACE (SỬA LỖI FORWARD CLASS)
@@ -11,15 +11,13 @@
 
 @interface SBIconView : UIView
 @property (nonatomic, strong) id icon;
-- (void)_handleTap;
-@end
-
-@interface NCNotificationShortLookView : UIView
 @end
 
 @interface LMTransitionState : NSObject
+@property (nonatomic, strong) CALayer *backdrop;
 @property (nonatomic, strong) CAShapeLayer *maskShape;
 @property (nonatomic, strong) CALayer *iconLayer;
+@property (nonatomic, strong) CALayer *colorLayer;
 @property (nonatomic, assign) CGRect iconFrame;
 @property (nonatomic, assign) BOOL isOpening;
 @end
@@ -28,15 +26,17 @@
 @end
 
 // ==========================================
-// 2. BIẾN TOÀN CỤC
+// 2. BIẾN TOÀN CỤC & LOG AN TOÀN
 // ==========================================
 
 static LMTransitionState *gCurrentState = nil;
 static UIWindow *gOverlayWindow = nil;
 static BOOL gIsCustomAppLaunching = NO;
 
+#define LMLog(fmt, ...) NSLog(@"[LiquidMorph] " fmt, ##__VA_ARGS__)
+
 // ==========================================
-// 3. TỐI ƯU VẼ DƯỜNG CONG (CGPATH ENGINE)
+// 3. TOÁN HỌC VẼ DƯỜNG CONG (CGPATH ENGINE)
 // ==========================================
 
 static CGPathRef LMRoundedQuadPath(CGPoint tl, CGPoint tr, CGPoint br, CGPoint bl,
@@ -84,16 +84,39 @@ static CGFloat LMEdgeProgress(CGFloat t, CGFloat closeness, CGFloat maxDelay) {
     CGFloat span = 1.0 - delay;
     if (span <= 0) span = 0.001;
     CGFloat edgeT = (t - delay) / span;
-    return (edgeT < 0) ? 0 : ((edgeT > 1) ? 1 : edgeT);
+    if (edgeT < 0) edgeT = 0;
+    if (edgeT > 1) edgeT = 1;
+    return edgeT;
 }
 
 static CGFloat LMHumpRadius(CGFloat t) {
+    CGFloat iconRadius = 13.0;
+    CGFloat peakRadius = 120.0;
+    CGFloat endRadius = 20.0;
     if (t < 0.45) {
-        return 13.0 + (90.0 - 13.0) * (t / 0.45);
+        CGFloat local = t / 0.45;
+        return iconRadius + (peakRadius - iconRadius) * local;
     } else {
         CGFloat local = (t - 0.45) / 0.55;
-        return 90.0 + (0.0 - 90.0) * (local > 1.0 ? 1.0 : local);
+        if (local > 1) local = 1;
+        return peakRadius + (endRadius - peakRadius) * local;
     }
+}
+
+static UIColor *LMSystemBackgroundColor(void) {
+    if (@available(iOS 13.0, *)) {
+        return [UIColor systemBackgroundColor];
+    }
+    return [UIColor whiteColor];
+}
+
+// LẤY HÌNH ICON AN TOÀN TRÁNH CRASH CoreAnimation
+static UIImage *LMSafeExtractIconImage(UIView *iconView) {
+    if (!iconView) return nil;
+    if (iconView.layer.contents) {
+        return [UIImage imageWithCGImage:(__bridge CGImageRef)iconView.layer.contents];
+    }
+    return nil;
 }
 
 static NSArray *LMBuildKeyframePaths(CGRect iconFrame, CGRect screen, BOOL opening) {
@@ -105,17 +128,20 @@ static NSArray *LMBuildKeyframePaths(CGRect iconFrame, CGRect screen, BOOL openi
     CGFloat closeRight = iconCenterXNorm;
     CGFloat closeLeft = 1.0 - iconCenterXNorm;
 
-    NSInteger steps = 16;
-    NSMutableArray *paths = [NSMutableArray arrayWithCapacity:steps + 1];
-    CGFloat maxDelay = 0.30;
+    NSInteger steps = 28;
+    NSMutableArray *paths = [NSMutableArray array];
+    CGFloat maxDelay = 0.4;
+    CGFloat endRadius = 20.0;
     CGFloat iconRadius = 13.0;
-    CGFloat growStart = 0.08;
+    CGFloat growStart = 0.15;
+
+    CGFloat bounceDirection = (iconCenterYNorm > 0.5) ? -1.0 : 1.0;
+    CGFloat bounceAmount = 42.0;
 
     CGFloat iconLeft = iconFrame.origin.x;
     CGFloat iconRight = iconFrame.origin.x + iconFrame.size.width;
     CGFloat iconTop = iconFrame.origin.y;
     CGFloat iconBottom = iconFrame.origin.y + iconFrame.size.height;
-    
     CGFloat screenLeft = screen.origin.x;
     CGFloat screenRight = screen.origin.x + screen.size.width;
     CGFloat screenTop = screen.origin.y;
@@ -124,6 +150,7 @@ static NSArray *LMBuildKeyframePaths(CGRect iconFrame, CGRect screen, BOOL openi
     for (NSInteger i = 0; i <= steps; i++) {
         CGFloat tRaw = (CGFloat)i / (CGFloat)steps;
         CGFloat t = opening ? tRaw : (1.0 - tRaw);
+
         CGPathRef p;
 
         if (t < growStart) {
@@ -139,8 +166,11 @@ static NSArray *LMBuildKeyframePaths(CGRect iconFrame, CGRect screen, BOOL openi
             CGFloat leftP = LMEdgeProgress(t2, closeLeft, maxDelay);
             CGFloat rightP = LMEdgeProgress(t2, closeRight, maxDelay);
 
-            CGFloat topY = iconTop + (screenTop - iconTop) * topP;
-            CGFloat bottomY = iconBottom + (screenBottom - iconBottom) * bottomP;
+            CGFloat bounceEnvelope = sinf(MIN(t2, 1.0) * M_PI) * bounceAmount * bounceDirection;
+
+            CGFloat topY = iconTop + (screenTop - iconTop) * topP + bounceEnvelope * (1.0 - topP);
+            CGFloat bottomY = iconBottom + (screenBottom - iconBottom) * bottomP + bounceEnvelope * (1.0 - bottomP);
+
             CGFloat topLeftX = iconLeft + (screenLeft - iconLeft) * ((topP + leftP) * 0.5);
             CGFloat topRightX = iconRight + (screenRight - iconRight) * ((topP + rightP) * 0.5);
             CGFloat bottomLeftX = iconLeft + (screenLeft - iconLeft) * ((bottomP + leftP) * 0.5);
@@ -152,28 +182,28 @@ static NSArray *LMBuildKeyframePaths(CGRect iconFrame, CGRect screen, BOOL openi
             CGPoint bl = CGPointMake(bottomLeftX, bottomY);
 
             CGFloat humpBase = LMHumpRadius(t2);
-            CGFloat rTL = humpBase * (1.0 - MIN(topP, leftP));
-            CGFloat rTR = humpBase * (1.0 - MIN(topP, rightP));
-            CGFloat rBR = humpBase * (1.0 - MIN(bottomP, rightP));
-            CGFloat rBL = humpBase * (1.0 - MIN(bottomP, leftP));
+
+            CGFloat rTL = humpBase * (1.0 - MIN(topP, leftP)) + endRadius * MIN(topP, leftP);
+            CGFloat rTR = humpBase * (1.0 - MIN(topP, rightP)) + endRadius * MIN(topP, rightP);
+            CGFloat rBR = humpBase * (1.0 - MIN(bottomP, rightP)) + endRadius * MIN(bottomP, rightP);
+            CGFloat rBL = humpBase * (1.0 - MIN(bottomP, leftP)) + endRadius * MIN(bottomP, leftP);
 
             p = LMRoundedQuadPath(tl, tr, br, bl, rTL, rTR, rBR, rBL);
         }
-        
-        [paths addObject:(__bridge id)p];
-        CGPathRelease(p);
+
+        [paths addObject:(__bridge_transfer id)p];
     }
     return paths;
 }
 
 // ==========================================
-// 4. QUẢN LÝ OVERLAY VÀ CHUYỂN CẢNH
+// 4. QUẢN LÝ OVERLAY VÀ ANIMATION
 // ==========================================
 
 static void LMForceClearOverlay(void) {
     if (gOverlayWindow) {
-        gOverlayWindow.hidden = YES;
-        for (CALayer *l in [gOverlayWindow.layer.sublayers copy]) {
+        NSArray *sublayers = [gOverlayWindow.layer.sublayers copy];
+        for (CALayer *l in sublayers) {
             [l removeFromSuperlayer];
         }
     }
@@ -182,16 +212,14 @@ static void LMForceClearOverlay(void) {
 }
 
 static void LMEnsureWindow(void) {
-    if (!gOverlayWindow) {
-        gOverlayWindow = [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
-        gOverlayWindow.windowLevel = UIWindowLevelStatusBar + 5;
-        gOverlayWindow.userInteractionEnabled = NO;
-        gOverlayWindow.backgroundColor = [UIColor clearColor];
-    }
-    
+    if (gOverlayWindow) return;
+    gOverlayWindow = [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
+    gOverlayWindow.windowLevel = UIWindowLevelStatusBar + 1000;
+    gOverlayWindow.userInteractionEnabled = NO;
+    gOverlayWindow.backgroundColor = [UIColor clearColor];
     if (@available(iOS 13.0, *)) {
         for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
-            if (scene.activationState == UISceneActivationStateForegroundActive && [scene isKindOfClass:[UIWindowScene class]]) {
+            if ([scene isKindOfClass:[UIWindowScene class]]) {
                 gOverlayWindow.windowScene = (UIWindowScene *)scene;
                 break;
             }
@@ -206,7 +234,12 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
 
     gIsCustomAppLaunching = YES;
     CGRect screen = gOverlayWindow.bounds;
-    CGFloat duration = 0.28; 
+    CGFloat duration = 0.45;
+
+    CALayer *backdrop = [CALayer layer];
+    backdrop.frame = screen;
+    backdrop.backgroundColor = LMSystemBackgroundColor().CGColor;
+    [gOverlayWindow.layer addSublayer:backdrop];
 
     CAShapeLayer *maskShape = [CAShapeLayer layer];
     maskShape.frame = screen;
@@ -214,21 +247,24 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
     CALayer *iconLayer = [CALayer layer];
     iconLayer.frame = screen;
     iconLayer.contentsGravity = kCAGravityResizeAspectFill;
-    
     if (iconImage) {
         iconLayer.contents = (__bridge id)iconImage.CGImage;
     } else {
-        iconLayer.backgroundColor = [UIColor colorWithRed:0.08 green:0.75 blue:0.95 alpha:1.0].CGColor;
+        iconLayer.backgroundColor = [UIColor colorWithWhite:0.85 alpha:1.0].CGColor;
     }
-    
     iconLayer.mask = maskShape;
     [gOverlayWindow.layer addSublayer:iconLayer];
 
+    CAShapeLayer *maskShape2 = [CAShapeLayer layer];
+    maskShape2.frame = screen;
+    CALayer *colorLayer = [CALayer layer];
+    colorLayer.frame = screen;
+    colorLayer.backgroundColor = LMSystemBackgroundColor().CGColor;
+    colorLayer.opacity = 0.0;
+    colorLayer.mask = maskShape2;
+    [gOverlayWindow.layer addSublayer:colorLayer];
+
     NSArray *paths = LMBuildKeyframePaths(iconFrame, screen, opening);
-    if (paths.count == 0) {
-        LMForceClearOverlay();
-        return;
-    }
 
     CAKeyframeAnimation *pathAnim = [CAKeyframeAnimation animationWithKeyPath:@"path"];
     pathAnim.values = paths;
@@ -240,22 +276,41 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
     maskShape.path = (__bridge CGPathRef)paths.lastObject;
     [maskShape addAnimation:pathAnim forKey:@"morph"];
 
+    maskShape2.path = (__bridge CGPathRef)paths.lastObject;
+    [maskShape2 addAnimation:pathAnim forKey:@"morph"];
+
+    CAKeyframeAnimation *fadeAnim = [CAKeyframeAnimation animationWithKeyPath:@"opacity"];
+    fadeAnim.values = @[@0.0, @0.0, @1.0, @1.0];
+    fadeAnim.keyTimes = @[@0.0, @0.55, @0.66, @1.0];
+    fadeAnim.duration = duration;
+    fadeAnim.fillMode = kCAFillModeForwards;
+    fadeAnim.removedOnCompletion = NO;
+
+    colorLayer.opacity = 1.0;
+    [colorLayer addAnimation:fadeAnim forKey:@"fade"];
+
     LMTransitionState *state = [LMTransitionState new];
+    state.backdrop = backdrop;
     state.maskShape = maskShape;
     state.iconLayer = iconLayer;
+    state.colorLayer = colorLayer;
     state.iconFrame = iconFrame;
     state.isOpening = opening;
     gCurrentState = state;
 
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(duration * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)((duration + 0.02) * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         if (gCurrentState == state) {
-            LMForceClearOverlay();
+            [backdrop removeFromSuperlayer];
+            [iconLayer removeFromSuperlayer];
+            [colorLayer removeFromSuperlayer];
+            gCurrentState = nil;
+            gIsCustomAppLaunching = NO;
         }
     });
 }
 
 // ==========================================
-// 5. HOOKS: ẨN ANIMATION MỞ APP GỐC
+// 5. HOOKS: ẨN ANIMATION CHUYỂN CẢNH GỐC
 // ==========================================
 
 %hook SBUIAnimationController
@@ -277,7 +332,12 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
 }
 %end
 
+// ==========================================
+// 6. HOOKS: BẮT SỰ KIỆN CHẠM ICON VÀ HOME
+// ==========================================
+
 %hook SBIconView
+
 - (void)_handleTap {
     @try {
         id icon = [self valueForKey:@"icon"];
@@ -287,69 +347,48 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
                              [className.lowercaseString containsString:@"library"] ||
                              [className.lowercaseString containsString:@"cluster"];
 
-        if (!isFolderLike && self.window != nil) {
-            CGRect frameInWindow = [self.window convertRect:self.bounds fromView:self];
-            
-            UIImage *iconImage = nil;
-            if (self.layer.contents) {
-                iconImage = [UIImage imageWithCGImage:(__bridge CGImageRef)self.layer.contents];
-            }
-            
-            LMPlayTransition(frameInWindow, iconImage, YES);
-        }
-    } @catch (NSException *e) {}
-    %orig;
-}
-%end
-
-// ==========================================
-// 6. HOOKS: THÔNG BÁO TÙY CHỈNH
-// ==========================================
-
-%hook NCNotificationShortLookView
-
-- (void)didMoveToWindow {
-    %orig;
-    if (self.window) {
-        UIView *backgroundMaterialView = [self valueForKey:@"_backgroundMaterialView"];
-        if (backgroundMaterialView) {
-            backgroundMaterialView.alpha = 0.0;
+        if (isFolderLike) {
+            %orig;
+            return;
         }
 
-        self.backgroundColor = [UIColor colorWithRed:0.07 green:0.09 blue:0.12 alpha:0.78];
-        self.layer.cornerRadius = 24.0;
-        self.layer.borderWidth = 1.0;
-        self.layer.borderColor = [UIColor colorWithRed:0.35 green:0.85 blue:1.0 alpha:0.35].CGColor;
-        
-        self.layer.shadowColor = [UIColor colorWithRed:0.20 green:0.80 blue:1.0 alpha:0.45].CGColor;
-        self.layer.shadowOffset = CGSizeMake(0, 10);
-        self.layer.shadowOpacity = 1.0;
-        self.layer.shadowRadius = 18.0;
-
-        self.transform = CGAffineTransformMakeScale(0.80, 0.80);
-        self.alpha = 0.0;
-        
-        [UIView animateWithDuration:0.42 
-                              delay:0.0 
-             usingSpringWithDamping:0.68 
-              initialSpringVelocity:0.7 
-                            options:UIViewAnimationOptionAllowUserInteraction | UIViewAnimationOptionCurveEaseInOut 
-                         animations:^{
-            self.transform = CGAffineTransformIdentity;
-            self.alpha = 1.0;
-        } completion:nil];
+        CGRect frameInWindow = [self.window convertRect:self.bounds fromView:self];
+        UIImage *iconImage = LMSafeExtractIconImage(self);
+        LMPlayTransition(frameInWindow, iconImage, YES);
+    } @catch (NSException *e) {
+        LMLog(@"Exception in _handleTap: %@", e.reason);
     }
+    %orig;
+}
+
+%end
+
+@interface SBIconController : NSObject
+- (void)handleHomeButtonTap;
+@end
+
+%hook SBIconController
+
+- (void)handleHomeButtonTap {
+    @try {
+        if (gCurrentState && gCurrentState.isOpening) {
+            CGRect iconFrame = gCurrentState.iconFrame;
+            LMPlayTransition(iconFrame, nil, NO);
+        }
+    } @catch (NSException *e) {
+        LMLog(@"Exception in handleHomeButtonTap: %@", e.reason);
+    }
+    %orig;
 }
 
 %end
 
 // ==========================================
-// 7. CHẠY THẲNG VÀO HỆ THỐNG KHI TẢI
+// 7. KHỞI TẠO TWEAK
 // ==========================================
 
 %ctor {
     @autoreleasepool {
-        NSLog(@"[LiquidMorph] Direct injection into SpringBoard active.");
-        LMForceClearOverlay();
+        LMLog(@"LiquidMorph loaded successfully into SpringBoard.");
     }
 }
