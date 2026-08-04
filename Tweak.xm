@@ -24,7 +24,7 @@ static CGRect gCachedIconFrame = CGRectZero;
 static UIImage *gCachedIconImage = nil;
 static BOOL gIsPerformingCustomTransition = NO;
 
-#define LM_LOG(fmt, ...) NSLog(@"[LiquidMorph26_Full] " fmt, ##__VA_ARGS__)
+#define LM_LOG(fmt, ...) NSLog(@"[LiquidMorph26] " fmt, ##__VA_ARGS__)
 
 // ==========================================
 // 3. OVERLAY WINDOW MANAGEMENT
@@ -41,7 +41,7 @@ static void LMInitializeOverlayWindow(void) {
     if (@available(iOS 13.0, *)) {
         for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
             if ([scene isKindOfClass:[UIWindowScene class]] && scene.activationState == UISceneActivationStateForegroundActive) {
-                gLiquidMorphWindow.windowScene = (UIScene *)scene;
+                gLiquidMorphWindow.windowScene = (UIWindowScene *)scene;
                 break;
             }
         }
