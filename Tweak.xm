@@ -269,7 +269,7 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
 
     CALayer *backdrop = [CALayer layer];
     backdrop.frame = screen;
-    backdrop.backgroundColor = LMSystemBackgroundColor().CGColor;
+    backdrop.backgroundColor = [UIColor clearColor].CGColor;
     [gOverlayWindow.layer addSublayer:backdrop];
 
     CAShapeLayer *maskShape = [CAShapeLayer layer];
@@ -310,9 +310,10 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
     maskShape2.path = (__bridge CGPathRef)paths.lastObject;
     [maskShape2 addAnimation:pathAnim forKey:@"morph"];
 
+    // Đồng bộ hóa thời điểm fade để đợi khung hình phóng gần trọn màn hình rồi mới hòa vào app
     CAKeyframeAnimation *fadeAnim = [CAKeyframeAnimation animationWithKeyPath:@"opacity"];
     fadeAnim.values = @[@0.0, @0.0, @1.0, @1.0];
-    fadeAnim.keyTimes = @[@0.0, @0.55, @0.66, @1.0];
+    fadeAnim.keyTimes = @[@0.0, @0.65, @0.80, @1.0];
     fadeAnim.duration = duration;
     fadeAnim.fillMode = kCAFillModeForwards;
     fadeAnim.removedOnCompletion = NO;
@@ -416,5 +417,5 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
 %end
 
 %ctor {
-    LMLog(@"=== LiquidMorph v10.3 Stable Loaded ===");
+    LMLog(@"=== LiquidMorph v10.5 Synced Loaded ===");
 }
