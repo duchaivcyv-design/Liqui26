@@ -85,8 +85,8 @@ static CGFloat LMHumpRadius(CGFloat t) {
 }
 
 static UIColor *LMSystemBackgroundColor(void) {
-    if (@available(iOS 13.0, *)) {
-        return [UIColor systemBackgroundColor];
+    if ([UIColor respondsToSelector:@selector(systemBackgroundColor)]) {
+        return [UIColor performSelector:@selector(systemBackgroundColor)];
     }
     return [UIColor whiteColor];
 }
@@ -210,9 +210,10 @@ static void LMEnsureWindow(void) {
         gOverlayWindow.userInteractionEnabled = NO;
         gOverlayWindow.backgroundColor = [UIColor clearColor];
     }
-    if (@available(iOS 13.0, *)) {
+    Class targetSceneClass = NSClassFromString(@"UIWindowScene");
+    if (targetSceneClass) {
         for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
-            if ([scene isKindOfClass:[UIWindowScene class]] && ((UIWindowScene *)scene).activationState == UISceneActivationStateForegroundActive) {
+            if ([scene isKindOfClass:targetSceneClass] && scene.activationState == UISceneActivationStateForegroundActive) {
                 gOverlayWindow.windowScene = (UIWindowScene *)scene;
                 break;
             }
