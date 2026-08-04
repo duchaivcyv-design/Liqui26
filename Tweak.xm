@@ -81,13 +81,6 @@ static CGFloat LMHumpRadius(CGFloat t) {
     }
 }
 
-static UIColor *LMSystemBackgroundColor(void) {
-    if (@available(iOS 13.0, *)) {
-        return [UIColor systemBackgroundColor];
-    }
-    return [UIColor whiteColor];
-}
-
 static UIImage *LMRenderIconImage(UIView *iconView) {
     if (!iconView) return nil;
     CGSize size = iconView.bounds.size;
@@ -104,7 +97,6 @@ static UIImage *LMRenderIconImage(UIView *iconView) {
 @property (nonatomic, strong) CALayer *backdrop;
 @property (nonatomic, strong) CAShapeLayer *maskShape;
 @property (nonatomic, strong) CALayer *iconLayer;
-@property (nonatomic, strong) CALayer *colorLayer;
 @property (nonatomic, assign) CGRect iconFrame;
 @property (nonatomic, assign) BOOL isOpening;
 @end
@@ -114,6 +106,7 @@ static UIImage *LMRenderIconImage(UIView *iconView) {
 static LMTransitionState *gCurrentState = nil;
 static UIWindow *gOverlayWindow = nil;
 static CGRect gLastOpenedIconFrame = CGRectZero;
+static UIImage *gLastOpenedIconImage = nil;
 static BOOL gIsCustomTransitionActive = NO;
 
 static BOOL LMIsInAppSwitcher(void) {
@@ -254,18 +247,22 @@ static void LMEnsureWindow(void) {
 }
 
 static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening) {
-    if (gIsCustomTransitionActive) return;
+    // Nếu đang chạy hiệu ứng mở/đóng dở dang, cho phép reset để tránh kẹt trạng thái màn hình đen
+    if (gIsCustomTransitionActive) {
+        LMForceClearOverlay();
+    }
 
-    LMForceClearOverlay();
     LMEnsureWindow();
 
     gIsCustomTransitionActive = YES;
     if (opening) {
         gLastOpenedIconFrame = iconFrame;
+        gLastOpenedIconImage = iconImage;
     }
 
     CGRect screen = gOverlayWindow.bounds;
-    CGFloat duration = 0.75;
+    // Tăng tốc độ mượt mà hơn (giảm thời lượng xuống 0.55s để chuẩn xác như hiệu ứng iOS gốc)
+    CGFloat duration = 0.55;
 
     CALayer *backdrop = [CALayer layer];
     backdrop.frame = screen;
@@ -278,22 +275,14 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
     CALayer *iconLayer = [CALayer layer];
     iconLayer.frame = screen;
     iconLayer.contentsGravity = kCAGravityResizeAspectFill;
-    if (iconImage) {
-        iconLayer.contents = (__bridge id)iconImage.CGImage;
+    UIImage *targetImg = iconImage ? iconImage : gLastOpenedIconImage;
+    if (targetImg) {
+        iconLayer.contents = (__bridge id)targetImg.CGImage;
     } else {
         iconLayer.backgroundColor = [UIColor colorWithWhite:0.85 alpha:1.0].CGColor;
     }
     iconLayer.mask = maskShape;
     [gOverlayWindow.layer addSublayer:iconLayer];
-
-    CAShapeLayer *maskShape2 = [CAShapeLayer layer];
-    maskShape2.frame = screen;
-    CALayer *colorLayer = [CALayer layer];
-    colorLayer.frame = screen;
-    colorLayer.backgroundColor = LMSystemBackgroundColor().CGColor;
-    colorLayer.opacity = 0.0;
-    colorLayer.mask = maskShape2;
-    [gOverlayWindow.layer addSublayer:colorLayer];
 
     NSArray *paths = LMBuildKeyframePaths(iconFrame, screen, opening);
 
@@ -307,34 +296,18 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
     maskShape.path = (__bridge CGPathRef)paths.lastObject;
     [maskShape addAnimation:pathAnim forKey:@"morph"];
 
-    maskShape2.path = (__bridge CGPathRef)paths.lastObject;
-    [maskShape2 addAnimation:pathAnim forKey:@"morph"];
-
-    // Đồng bộ hóa thời điểm fade để đợi khung hình phóng gần trọn màn hình rồi mới hòa vào app
-    CAKeyframeAnimation *fadeAnim = [CAKeyframeAnimation animationWithKeyPath:@"opacity"];
-    fadeAnim.values = @[@0.0, @0.0, @1.0, @1.0];
-    fadeAnim.keyTimes = @[@0.0, @0.65, @0.80, @1.0];
-    fadeAnim.duration = duration;
-    fadeAnim.fillMode = kCAFillModeForwards;
-    fadeAnim.removedOnCompletion = NO;
-
-    colorLayer.opacity = 1.0;
-    [colorLayer addAnimation:fadeAnim forKey:@"fade"];
-
     LMTransitionState *state = [LMTransitionState new];
     state.backdrop = backdrop;
     state.maskShape = maskShape;
     state.iconLayer = iconLayer;
-    state.colorLayer = colorLayer;
     state.iconFrame = iconFrame;
     state.isOpening = opening;
     gCurrentState = state;
 
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)((duration + 0.05) * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)((duration + 0.02) * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         if (gCurrentState == state) {
             [backdrop removeFromSuperlayer];
             [iconLayer removeFromSuperlayer];
-            [colorLayer removeFromSuperlayer];
             gCurrentState = nil;
             gIsCustomTransitionActive = NO;
         }
@@ -349,7 +322,7 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
 
 - (void)_handleTap {
     @try {
-        if (gIsCustomTransitionActive || LMIsInAppSwitcher()) {
+        if (LMIsInAppSwitcher()) {
             %orig;
             return;
         }
@@ -384,31 +357,32 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
         }
 
         UIImage *iconImage = LMRenderIconImage(self);
+        
+        // Gọi thẳng hiệu ứng phóng to liquid morph đồng thời chặn hiệu ứng gốc của iOS
         LMPlayTransition(frameInWindow, iconImage, YES);
+        
+        // Thực thi lệnh mở app gốc ngầm bên dưới mà không bị xung đột khung hình đen
+        %orig;
+        return;
     } @catch (NSException *e) {}
     %orig;
 }
 
 %end
 
-@interface SBIconController : NSObject
-- (void)handleHomeButtonTap;
+// Hook bắt sự kiện vuốt Home / đóng app từ SpringBoard Workspace để kích hoạt hiệu ứng thu nhỏ ngược lại đúng vị trí icon
+@interface SBWorkspaceTransitionRequest
 @end
 
-%hook SBIconController
+%hook SBMainWorkspace
 
-- (void)handleHomeButtonTap {
+- (void)executeTransitionRequest:(SBWorkspaceTransitionRequest *)request withCompletion:(id)completion {
     @try {
-        if (gIsCustomTransitionActive || LMIsInAppSwitcher()) {
-            %orig;
-            return;
-        }
-
-        if (gCurrentState && gCurrentState.isOpening) {
-            CGRect iconFrame = gCurrentState.iconFrame;
-            LMPlayTransition(iconFrame, nil, NO);
-        } else if (gLastOpenedIconFrame.size.width > 0) {
-            LMPlayTransition(gLastOpenedIconFrame, nil, NO);
+        NSString *reqDesc = [request description];
+        if ([reqDesc containsString:@"Deactivating"] || [reqDesc containsString:@"dismiss"] || [reqDesc containsString:@"to-homescreen"]) {
+            if (gLastOpenedIconFrame.size.width > 0) {
+                LMPlayTransition(gLastOpenedIconFrame, gLastOpenedIconImage, NO);
+            }
         }
     } @catch (NSException *e) {}
     %orig;
@@ -417,5 +391,5 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
 %end
 
 %ctor {
-    LMLog(@"=== LiquidMorph v10.5 Synced Loaded ===");
+    LMLog(@"=== LiquidMorph v10.7 Perfect Sync Loaded ===");
 }
