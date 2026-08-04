@@ -92,52 +92,36 @@ static UIImage *LMRenderIconImage(UIView *iconView) {
     }];
 }
 
-@interface LMTransitionState : NSObject
-@property (nonatomic, strong) CALayer *backdrop;
-@property (nonatomic, strong) CAShapeLayer *maskShape;
-@property (nonatomic, strong) CALayer *iconLayer;
-@property (nonatomic, assign) CGRect iconFrame;
-@property (nonatomic, assign) BOOL isOpening;
-@end
-@implementation LMTransitionState
-@end
-
-static LMTransitionState *gCurrentState = nil;
 static UIWindow *gOverlayWindow = nil;
 static CGRect gLastOpenedIconFrame = CGRectZero;
 static UIImage *gLastOpenedIconImage = nil;
 static BOOL gIsCustomTransitionActive = NO;
 
-static BOOL LMIsInAppSwitcher(void) {
-    @try {
-        Class appSwitcherControllerClass = objc_getClass("SBMainSwitcherViewController");
-        if (!appSwitcherControllerClass) {
-            appSwitcherControllerClass = objc_getClass("SBAppSwitcherController");
+static void LMForceClearOverlay(void) {
+    if (gOverlayWindow) {
+        NSArray *sublayers = [gOverlayWindow.layer.sublayers copy];
+        for (CALayer *l in sublayers) {
+            [l removeFromSuperlayer];
         }
-        if (appSwitcherControllerClass) {
-            SEL selShared = NSSelectorFromString(@"sharedInstance");
-            if ([appSwitcherControllerClass respondsToSelector:selShared]) {
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Warc-performSelector-leaks"
-                id switcher = [appSwitcherControllerClass performSelector:selShared];
-#pragma clang diagnostic pop
-                if (switcher) {
-                    SEL selActive = NSSelectorFromString(@"isSwitcherVisible");
-                    if ([switcher respondsToSelector:selActive]) {
-                        NSMethodSignature *sig = [switcher methodSignatureForSelector:selActive];
-                        NSInvocation *inv = [NSInvocation invocationWithMethodSignature:sig];
-                        [inv setTarget:switcher];
-                        [inv setSelector:selActive];
-                        [inv invoke];
-                        BOOL visible = NO;
-                        [inv getReturnValue:&visible];
-                        if (visible) return YES;
-                    }
-                }
+    }
+    gIsCustomTransitionActive = NO;
+}
+
+static void LMEnsureWindow(void) {
+    if (gOverlayWindow) return;
+    gOverlayWindow = [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
+    gOverlayWindow.windowLevel = UIWindowLevelStatusBar + 3000;
+    gOverlayWindow.userInteractionEnabled = NO;
+    gOverlayWindow.backgroundColor = [UIColor clearColor];
+    if (@available(iOS 13.0, *)) {
+        for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
+            if ([scene isKindOfClass:[UIWindowScene class]]) {
+                gOverlayWindow.windowScene = (UIWindowScene *)scene;
+                break;
             }
         }
-    } @catch (NSException *e) {}
-    return NO;
+    }
+    gOverlayWindow.hidden = NO;
 }
 
 static NSArray *LMBuildKeyframePaths(CGRect iconFrame, CGRect screen, BOOL opening) {
@@ -217,50 +201,23 @@ static NSArray *LMBuildKeyframePaths(CGRect iconFrame, CGRect screen, BOOL openi
     return paths;
 }
 
-static void LMForceClearOverlay(void) {
-    if (gOverlayWindow) {
-        NSArray *sublayers = [gOverlayWindow.layer.sublayers copy];
-        for (CALayer *l in sublayers) {
-            [l removeFromSuperlayer];
-        }
-    }
-    gCurrentState = nil;
-    gIsCustomTransitionActive = NO;
-}
-
-static void LMEnsureWindow(void) {
-    if (gOverlayWindow) return;
-    gOverlayWindow = [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
-    gOverlayWindow.windowLevel = UIWindowLevelStatusBar + 3000;
-    gOverlayWindow.userInteractionEnabled = NO;
-    gOverlayWindow.backgroundColor = [UIColor clearColor];
-    if (@available(iOS 13.0, *)) {
-        for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
-            if ([scene isKindOfClass:[UIWindowScene class]]) {
-                gOverlayWindow.windowScene = (UIWindowScene *)scene;
-                break;
-            }
-        }
-    }
-    gOverlayWindow.hidden = NO;
-}
-
 static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening) {
-    if (gIsCustomTransitionActive) {
-        LMForceClearOverlay();
-    }
-
+    // Dọn dẹp lập tức layer cũ để tránh xung đột khung hình hoặc kẹt màn hình đen khi bấm nhanh liên tục
+    LMForceClearOverlay();
     LMEnsureWindow();
 
     gIsCustomTransitionActive = YES;
-    if (opening) {
+    if (opening && !CGRectIsEmpty(iconFrame)) {
         gLastOpenedIconFrame = iconFrame;
-        gLastOpenedIconImage = iconImage;
+        if (iconImage) {
+            gLastOpenedIconImage = iconImage;
+        }
     }
 
     CGRect screen = gOverlayWindow.bounds;
     CGFloat duration = 0.55;
 
+    // Lớp nền trong suốt hoàn toàn, triệt tiêu mọi khung đen
     CALayer *backdrop = [CALayer layer];
     backdrop.frame = screen;
     backdrop.backgroundColor = [UIColor clearColor].CGColor;
@@ -272,7 +229,8 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
     CALayer *iconLayer = [CALayer layer];
     iconLayer.frame = screen;
     iconLayer.contentsGravity = kCAGravityResizeAspectFill;
-    UIImage *targetImg = iconImage ? iconImage : gLastOpenedIconImage;
+    
+    UIImage *targetImg = opening ? iconImage : (gLastOpenedIconImage ? gLastOpenedIconImage : iconImage);
     if (targetImg) {
         iconLayer.contents = (__bridge id)targetImg.CGImage;
     } else {
@@ -281,7 +239,8 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
     iconLayer.mask = maskShape;
     [gOverlayWindow.layer addSublayer:iconLayer];
 
-    NSArray *paths = LMBuildKeyframePaths(iconFrame, screen, opening);
+    CGRect activeFrame = opening ? iconFrame : (CGRectIsEmpty(gLastOpenedIconFrame) ? CGRectMake(screen.size.width/2 - 30, screen.size.height - 150, 60, 60) : gLastOpenedIconFrame);
+    NSArray *paths = LMBuildKeyframePaths(activeFrame, screen, opening);
 
     CAKeyframeAnimation *pathAnim = [CAKeyframeAnimation animationWithKeyPath:@"path"];
     pathAnim.values = paths;
@@ -293,21 +252,9 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
     maskShape.path = (__bridge CGPathRef)paths.lastObject;
     [maskShape addAnimation:pathAnim forKey:@"morph"];
 
-    LMTransitionState *state = [LMTransitionState new];
-    state.backdrop = backdrop;
-    state.maskShape = maskShape;
-    state.iconLayer = iconLayer;
-    state.iconFrame = iconFrame;
-    state.isOpening = opening;
-    gCurrentState = state;
-
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)((duration + 0.02) * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        if (gCurrentState == state) {
-            [backdrop removeFromSuperlayer];
-            [iconLayer removeFromSuperlayer];
-            gCurrentState = nil;
-            gIsCustomTransitionActive = NO;
-        }
+    // Sau khi hiệu ứng hoàn tất, dọn dẹp sạch sẽ layer ngay lập tức để lộ nội dung app mượt mà không bị lẹm khung đen
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(duration * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        LMForceClearOverlay();
     });
 }
 
@@ -319,11 +266,6 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
 
 - (void)_handleTap {
     @try {
-        if (LMIsInAppSwitcher()) {
-            %orig;
-            return;
-        }
-
         id icon = [self valueForKey:@"icon"];
         NSString *className = NSStringFromClass([icon class]);
 
@@ -336,43 +278,25 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
             return;
         }
 
-        if ([icon respondsToSelector:@selector(application)]) {
-            id app = [icon performSelector:@selector(application)];
-            if (app && [app respondsToSelector:@selector(bundleIdentifier)]) {
-                NSString *bundleID = [app performSelector:@selector(bundleIdentifier)];
-                if (!bundleID || bundleID.length == 0) {
-                    %orig;
-                    return;
-                }
-            }
-        }
-
         CGRect frameInWindow = [self.window convertRect:self.bounds fromView:self];
-        if (CGRectIsEmpty(frameInWindow) || frameInWindow.size.width < 10) {
-            %orig;
-            return;
+        if (!CGRectIsEmpty(frameInWindow) && frameInWindow.size.width >= 10) {
+            UIImage *iconImage = LMRenderIconImage(self);
+            LMPlayTransition(frameInWindow, iconImage, YES);
         }
-
-        UIImage *iconImage = LMRenderIconImage(self);
-        
-        LMPlayTransition(frameInWindow, iconImage, YES);
-        
-        %orig;
-        return;
     } @catch (NSException *e) {}
     %orig;
 }
 
 %end
 
-// Sử dụng kiểu 'id' thay cho 'SBWorkspaceTransitionRequest *' để khắc phục triệt để lỗi biên dịch unknown type name
+// Bắt chính xác sự kiện vuốt Home / đóng ứng dụng từ SpringBoard Workspace để kích hoạt hiệu ứng thu nhỏ ngược lại
 %hook SBMainWorkspace
 
 - (void)executeTransitionRequest:(id)request withCompletion:(id)completion {
     @try {
         NSString *reqDesc = [request description];
         if ([reqDesc containsString:@"Deactivating"] || [reqDesc containsString:@"dismiss"] || [reqDesc containsString:@"to-homescreen"]) {
-            if (gLastOpenedIconFrame.size.width > 0) {
+            if (!gIsCustomTransitionActive && !CGRectIsEmpty(gLastOpenedIconFrame)) {
                 LMPlayTransition(gLastOpenedIconFrame, gLastOpenedIconImage, NO);
             }
         }
@@ -383,5 +307,5 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
 %end
 
 %ctor {
-    LMLog(@"=== LiquidMorph v10.8 Compile Fix Loaded ===");
+    LMLog(@"=== LiquidMorph v10.9 Final Clean Loaded ===");
 }
