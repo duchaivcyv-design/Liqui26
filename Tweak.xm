@@ -265,7 +265,7 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
     }
 
     CGRect screen = gOverlayWindow.bounds;
-    CGFloat duration = 0.75; // Đã tăng thêm 0.1s giúp hiệu ứng mượt mà và chậm rãi hơn
+    CGFloat duration = 0.75;
 
     CALayer *backdrop = [CALayer layer];
     backdrop.frame = screen;
@@ -388,9 +388,8 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
     %orig;
 }
 
-@end
+%end
 
-// Chỉ xử lý đóng app thông qua nút Home hoặc thao tác về Home chuẩn, loại bỏ hoàn toàn hook đè scene context gây màn hình đen
 @interface SBIconController : NSObject
 - (void)handleHomeButtonTap;
 @end
